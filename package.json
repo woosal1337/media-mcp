@@ -1,0 +1,46 @@
+{
+  "name": "media-mcp",
+  "version": "1.0.0",
+  "description": "MCP server for social media — fetch tweets, transcribe videos, extract frames, and download Instagram posts",
+  "type": "module",
+  "main": "dist/index.js",
+  "bin": "dist/index.js",
+  "license": "MIT",
+  "author": "Ege Celebi <ege@woosal.com>",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/woosal1337/media-mcp"
+  },
+  "keywords": [
+    "mcp",
+    "model-context-protocol",
+    "twitter",
+    "youtube",
+    "instagram",
+    "transcription",
+    "whisper",
+    "social-media",
+    "claude"
+  ],
+  "engines": {
+    "node": ">=20.0.0"
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsc",
+    "prepare": "tsc",
+    "start": "node dist/index.js",
+    "dev": "tsc --watch"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.12.1",
+    "youtube-transcript": "^1.3.0",
+    "zod": "^3.24.4"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "typescript": "^5.7.0"
+  }
+}

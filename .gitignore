@@ -1,0 +1,10 @@
+node_modules/
+dist/
+models/
+.env
+*.mp4
+*.wav
+*.mp3
+.DS_Store
+.trellis/
+.claude/
