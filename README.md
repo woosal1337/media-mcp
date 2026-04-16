@@ -2,83 +2,103 @@
   <img src="assets/banner.png" alt="media-mcp — Social media at your fingertips, from your terminal" width="100%" />
 </p>
 
-<p align="center">
-  MCP server for social media. Fetch tweets, transcribe videos, extract frames, and download Instagram posts — all from Claude Desktop, Claude Code, or any MCP client.
-</p>
+# media-mcp
 
-## What It Does
+Social media at your fingertips. 29 tools across Twitter/X, YouTube, Instagram, and video processing — from Claude Desktop, Claude Code, or any MCP client. 100% open source.
 
-- **Twitter/X** — Fetch tweets, threads, articles, user profiles, followers, search, trends, bookmarks, and real-time monitoring
-- **YouTube** — Get transcripts (captions or Whisper fallback)
-- **Instagram** — Download posts, carousels, and reels with transcription (via Cobalt)
-- **Video Frames** — Extract frames from any video URL at configurable FPS
+Point it at a tweet and get the full text, metrics, and video transcription. Give it a YouTube URL and get the transcript. Drop an Instagram reel and get the media downloaded plus audio transcribed. All transcription runs locally via Whisper — no audio leaves your machine.
 
-Videos are automatically transcribed using local Whisper. No audio leaves your machine.
+## What it does
 
-## Prerequisites
+- **Fetches** tweets, threads, profiles, followers, trends, and search results from Twitter/X (26 tools via TwitterAPI.io REST API)
+- **Transcribes** video audio locally using whisper-cli — downloads media, extracts audio with ffmpeg, runs Whisper on your hardware
+- **Downloads** Instagram posts, reels, and carousels to local folders via a self-hosted Cobalt instance
+- **Extracts** frames from any video URL (YouTube, Twitter, TikTok, Instagram, direct MP4) at configurable FPS with optional time ranges
+- **Monitors** Twitter users in real-time and filters tweets by keyword rules
 
-| Dependency | Required | What It Does | Install |
-|---|---|---|---|
-| [Node.js](https://nodejs.org/) 20+ | Yes | Runs the MCP server | `brew install node` or [nodejs.org](https://nodejs.org/) |
-| [ffmpeg](https://ffmpeg.org/) | Yes | Audio extraction and frame extraction | `brew install ffmpeg` |
-| [whisper-cli](https://github.com/ggerganov/whisper.cpp) | Yes | Local audio transcription | `brew install whisper-cpp` |
-| [yt-dlp](https://github.com/yt-dlp/yt-dlp) | Yes | YouTube and social video downloads | `brew install yt-dlp` |
-| [TwitterAPI.io](https://twitterapi.io/) key | Yes | Powers all Twitter/X tools | Sign up at [twitterapi.io](https://twitterapi.io/) |
-| [Cobalt](https://github.com/imputnet/cobalt) instance | Optional | Instagram downloads (and 20 other platforms) | See [Cobalt Deployment](#cobalt-deployment) below |
+## How it works
 
-## Quick Start
+The LLM never scrapes HTML or parses DOM. Every tool calls a purpose-built API and returns structured, LLM-ready text.
+
+**For text data** (tweets, profiles, trends): one REST call to TwitterAPI.io, parsed into formatted output.
+
+**For transcription** (tweet videos, YouTube, Instagram reels): the pipeline downloads media to a temp file, extracts audio with ffmpeg (16kHz mono WAV), transcribes with whisper-cli, then cleans up. For YouTube, captions are tried first (instant) — Whisper is only the fallback.
+
+**For visual data** (Instagram images, video frames): media is downloaded to a local folder and absolute file paths are returned so the LLM can read them directly with vision.
+
+## Pipeline
+
+```
+URL ──► Detect platform
+             │
+             ├── Twitter ──► TwitterAPI.io REST ──► structured text
+             │                     │
+             │               has video? ──► download ──► ffmpeg ──► whisper-cli
+             │
+             ├── YouTube ──► try captions (instant)
+             │                     │
+             │               no captions? ──► yt-dlp ──► ffmpeg ──► whisper-cli
+             │
+             ├── Instagram ──► Cobalt API ──► download media to folder
+             │                     │
+             │               has video? ──► ffmpeg ──► whisper-cli
+             │
+             └── Video URL ──► download ──► ffmpeg -vf fps=N ──► frame JPGs
+```
+
+All transcription is local. All temp files are cleaned up. The LLM gets structured text or file paths — never raw API JSON.
+
+## Design principles
+
+1. **Structured data, not scraping.** Every tool calls a purpose-built API. No HTML parsing, no fragile selectors, no browser automation.
+2. **Local transcription only.** Audio never leaves the machine. Whisper runs on local hardware.
+3. **Captions first, Whisper second.** Don't burn compute when the platform already did the work.
+4. **One tool, one job.** No multi-purpose tools with mode flags. Each tool does exactly one thing.
+5. **File paths for visual content.** Return absolute paths so the LLM can see images directly.
+
+See [`SKILL.md`](./SKILL.md) for the full pipeline details, tool reference, and anti-patterns.
+
+## Get started
 
 ```bash
 git clone https://github.com/woosal1337/media-mcp.git
 cd media-mcp
-npm install
-npm run build
+npm install && npm run build
 ```
 
-Download the Whisper base model:
+Download the Whisper model:
 
 ```bash
 mkdir -p models
-curl -L -o models/ggml-base.bin https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-base.bin
+curl -L -o models/ggml-base.bin \
+  https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-base.bin
 ```
 
-Create your `.env` file:
+Create `.env`:
 
 ```bash
 cp .env.example .env
+# Edit with your keys:
+# TWITTER_API_KEY=your_twitterapi_io_key
+# WHISPER_MODEL_PATH=/absolute/path/to/models/ggml-base.bin
+# COBALT_API_URL=http://localhost:9000       (optional, for Instagram)
+# COBALT_API_KEY=your_cobalt_key             (optional)
 ```
 
-Edit `.env` with your keys:
+## Prerequisites
 
-```
-TWITTER_API_KEY=your_twitterapi_io_key_here
-WHISPER_MODEL_PATH=/absolute/path/to/media-mcp/models/ggml-base.bin
-COBALT_API_URL=http://localhost:9000
-COBALT_API_KEY=your_cobalt_api_key_here
-```
+| Dependency | Required | What it does | Install |
+|---|---|---|---|
+| [Node.js](https://nodejs.org/) 20+ | Yes | Runs the MCP server | `brew install node` |
+| [ffmpeg](https://ffmpeg.org/) | Yes | Audio extraction + frame extraction | `brew install ffmpeg` |
+| [whisper-cli](https://github.com/ggerganov/whisper.cpp) | Yes | Local audio transcription | `brew install whisper-cpp` |
+| [yt-dlp](https://github.com/yt-dlp/yt-dlp) | Yes | Video downloads from YouTube + others | `brew install yt-dlp` |
+| [TwitterAPI.io](https://twitterapi.io/) key | Yes | Powers all Twitter/X tools | [twitterapi.io](https://twitterapi.io/) |
+| [Cobalt](https://github.com/imputnet/cobalt) instance | Optional | Instagram downloads | See [Cobalt setup](#cobalt-setup) |
 
-## Claude Desktop Configuration
+## Configuration
 
-Add to `~/Library/Application Support/Claude/claude_desktop_config.json` (macOS) or `%APPDATA%\Claude\claude_desktop_config.json` (Windows):
-
-```json
-{
-  "mcpServers": {
-    "media-mcp": {
-      "command": "node",
-      "args": ["/absolute/path/to/media-mcp/dist/index.js"],
-      "env": {
-        "TWITTER_API_KEY": "your_twitterapi_io_key",
-        "WHISPER_MODEL_PATH": "/absolute/path/to/media-mcp/models/ggml-base.bin",
-        "COBALT_API_URL": "http://localhost:9000",
-        "COBALT_API_KEY": "your_cobalt_api_key"
-      }
-    }
-  }
-}
-```
-
-## Claude Code Configuration
+### Claude Code
 
 Add to `~/.claude/settings.json`:
 
@@ -89,106 +109,120 @@ Add to `~/.claude/settings.json`:
       "command": "node",
       "args": ["/absolute/path/to/media-mcp/dist/index.js"],
       "env": {
-        "TWITTER_API_KEY": "your_twitterapi_io_key",
+        "TWITTER_API_KEY": "your_key",
         "WHISPER_MODEL_PATH": "/absolute/path/to/media-mcp/models/ggml-base.bin",
         "COBALT_API_URL": "http://localhost:9000",
-        "COBALT_API_KEY": "your_cobalt_api_key"
+        "COBALT_API_KEY": "your_cobalt_key"
       }
     }
   }
 }
 ```
 
-## Environment Variables
+### Claude Desktop
+
+Add to `~/Library/Application Support/Claude/claude_desktop_config.json` (macOS) or `%APPDATA%\Claude\claude_desktop_config.json` (Windows) — same structure as above.
+
+### Environment variables
 
 | Variable | Required | Description |
 |---|---|---|
 | `TWITTER_API_KEY` | Yes | API key from [twitterapi.io](https://twitterapi.io/) |
-| `WHISPER_MODEL_PATH` | No | Path to Whisper model file (defaults to `./models/ggml-base.bin`) |
-| `COBALT_API_URL` | No | URL of your Cobalt instance (required for Instagram tools) |
-| `COBALT_API_KEY` | No | Cobalt API key if auth is enabled on your instance |
+| `WHISPER_MODEL_PATH` | No | Path to Whisper model (defaults to `./models/ggml-base.bin`) |
+| `COBALT_API_URL` | No | URL of your Cobalt instance (required for Instagram) |
+| `COBALT_API_KEY` | No | Cobalt API key if auth is enabled |
 
 ## Tools
 
-### Twitter/X (26 tools)
+### Twitter/X — 26 tools
 
-| Tool | Description |
-|---|---|
-| `get_tweet` | Fetch a tweet by URL with text, media, metrics, threads, articles, and video transcription |
-| `get_user_profile` | Fetch user bio, follower counts, verification status |
-| `get_user_about` | Extended profile info beyond the basic profile |
-| `get_user_tweets` | Recent tweets from a user (paginated) |
-| `get_user_followers` | Followers of a user (paginated) |
-| `get_user_following` | Accounts a user follows (paginated) |
-| `get_user_mentions` | Tweets mentioning a user (paginated) |
-| `get_verified_followers` | Verified (blue check) followers of a user |
-| `check_follow_relationship` | Check if user A follows user B and vice versa |
-| `search_tweets` | Advanced search with operators (`from:`, `to:`, `#hashtag`, `min_faves:`, date ranges) |
-| `search_users` | Search for users by keyword |
-| `get_tweet_replies` | Replies to a tweet (paginated) |
-| `get_tweet_replies_v2` | Replies with sorting (Relevance, Latest, Likes) |
-| `get_tweet_quotes` | Quote tweets of a tweet (paginated) |
-| `get_tweet_retweeters` | Users who retweeted a tweet (paginated) |
-| `get_trends` | Trending topics (worldwide or by location via WOEID) |
-| `get_list_timeline` | Tweets from a Twitter list |
-| `get_community_tweets` | Tweets from a Twitter community |
-| `get_space_detail` | Twitter Space metadata |
-| `monitor_user_add` | Start real-time monitoring of a user's tweets |
-| `monitor_user_list` | List currently monitored users |
-| `monitor_user_remove` | Stop monitoring a user |
-| `filter_rule_add` | Add a keyword filter rule for real-time monitoring |
-| `filter_rule_list` | List active filter rules |
-| `filter_rule_delete` | Delete a filter rule |
+#### Fetching tweets
 
-### YouTube (1 tool)
+| Tool | Action | What it does |
+|---|---|---|
+| `get_tweet` | **Fetch + Transcribe** | Fetches tweet by URL with text, author, metrics, media, threads, articles. Transcribes video audio via Whisper. |
+| `get_user_tweets` | **Fetch** | Recent tweets from a user (paginated, 20/page) |
+| `search_tweets` | **Search** | Advanced search with operators (`from:`, `to:`, `#hashtag`, `min_faves:`, date ranges) |
+| `get_tweet_replies` | **Fetch** | Replies to a tweet (paginated, 20/page) |
+| `get_tweet_replies_v2` | **Fetch + Sort** | Replies with sorting: Relevance, Latest, or Likes |
+| `get_tweet_quotes` | **Fetch** | Quote tweets of a tweet (paginated, 20/page) |
+| `get_tweet_retweeters` | **Fetch** | Users who retweeted a tweet (paginated, 100/page) |
+| `get_list_timeline` | **Fetch** | Tweets from a Twitter list |
+| `get_community_tweets` | **Fetch** | Tweets from a Twitter community |
+| `get_trends` | **Fetch** | Trending topics (worldwide or by WOEID location) |
 
-| Tool | Description |
-|---|---|
-| `get_youtube_transcript` | Fetch video transcript — tries captions first (instant), falls back to yt-dlp + Whisper |
+#### Fetching profiles
 
-### Instagram (1 tool)
+| Tool | Action | What it does |
+|---|---|---|
+| `get_user_profile` | **Fetch** | User bio, follower counts, verification, location, website |
+| `get_user_about` | **Fetch** | Extended profile info beyond the basic profile |
+| `get_user_followers` | **Fetch** | Followers of a user (paginated, 200/page) |
+| `get_user_following` | **Fetch** | Accounts a user follows (paginated, 200/page) |
+| `get_user_mentions` | **Fetch** | Tweets mentioning a user (paginated, 20/page) |
+| `get_verified_followers` | **Fetch** | Verified (blue check) followers (paginated, 20/page) |
+| `search_users` | **Search** | Search users by keyword |
+| `check_follow_relationship` | **Check** | Whether user A follows user B and vice versa |
+| `get_space_detail` | **Fetch** | Twitter Space metadata (title, host, speakers, state) |
 
-| Tool | Description |
-|---|---|
-| `get_instagram_post` | Download post media (images, videos, carousels) to local folder with optional transcription. Requires Cobalt. |
+#### Real-time monitoring
 
-### Video (1 tool)
+| Tool | Action | What it does |
+|---|---|---|
+| `monitor_user_add` | **Start** | Begin real-time monitoring of a user's tweets |
+| `monitor_user_list` | **List** | All currently monitored users |
+| `monitor_user_remove` | **Stop** | Stop monitoring a user |
+| `filter_rule_add` | **Create** | Add a keyword filter rule for monitoring |
+| `filter_rule_list` | **List** | All active filter rules |
+| `filter_rule_delete` | **Delete** | Remove a filter rule |
 
-| Tool | Description |
-|---|---|
-| `extract_video_frames` | Extract frames from any video URL at configurable FPS with optional start/end times. Supports YouTube, Instagram, Twitter, TikTok, and direct video URLs. |
+### YouTube — 1 tool
 
-## How Transcription Works
+| Tool | Action | What it does |
+|---|---|---|
+| `get_youtube_transcript` | **Fetch + Transcribe** | Gets video transcript. Tries captions first (instant). Falls back to yt-dlp + ffmpeg + Whisper if no captions. |
+
+### Instagram — 1 tool
+
+| Tool | Action | What it does |
+|---|---|---|
+| `get_instagram_post` | **Download + Transcribe** | Downloads all media (images, videos, carousels) to local folder via Cobalt. Transcribes video audio with Whisper. Returns local file paths. |
+
+### Video — 1 tool
+
+| Tool | Action | What it does |
+|---|---|---|
+| `extract_video_frames` | **Download + Extract** | Downloads video from any URL, extracts frames at configurable FPS via ffmpeg. Supports time ranges. Returns local frame paths. |
+
+## How transcription works
+
+```
+video file ──► ffmpeg -ar 16000 -ac 1 -f wav ──► whisper-cli -m model ──► text
+                                                                            │
+                                                                   temp files cleaned up
+```
 
 1. Video is downloaded to a temp file
 2. ffmpeg extracts audio as 16kHz mono WAV
 3. whisper-cli transcribes locally using the Whisper model
 4. Temp files are cleaned up automatically
 
-For YouTube, captions are tried first (instant). Whisper is only used when no captions exist.
+For YouTube, captions are tried first (instant). Whisper is only used when no captions exist. All transcription happens locally — no audio is sent to external services.
 
-All transcription happens locally on your machine. No audio is sent to external services.
+## Cobalt setup
 
-## Cobalt Deployment
+[Cobalt](https://github.com/imputnet/cobalt) is an open-source media downloader supporting 21 platforms. media-mcp uses it for Instagram. You need your own instance — the public API requires JWT auth that doesn't work server-to-server.
 
-[Cobalt](https://github.com/imputnet/cobalt) is an open-source media downloader that supports 21 platforms. media-mcp uses it for Instagram downloads. You need your own Cobalt instance — the public API requires JWT auth that doesn't work with server-to-server calls.
-
-### Option 1: Docker (Recommended)
-
-Create a directory and a `docker-compose.yml`:
-
-```bash
-mkdir cobalt && cd cobalt
-```
+### Docker (recommended)
 
 ```yaml
+# docker-compose.yml
 services:
   cobalt:
     image: ghcr.io/imputnet/cobalt:11
     init: true
     read_only: true
     restart: unless-stopped
-    container_name: cobalt
     ports:
       - 9000:9000/tcp
     environment:
@@ -204,33 +238,22 @@ services:
       - /var/run/docker.sock:/var/run/docker.sock
 ```
 
-Start it:
-
 ```bash
 docker compose up -d
+curl http://localhost:9000/   # verify
 ```
 
-Verify it works:
+### Adding API key auth
 
 ```bash
-curl http://localhost:9000/
-```
-
-You should get a JSON response with instance info.
-
-### Adding API Key Authentication
-
-Generate a key:
-
-```bash
-node -e "console.log(crypto.randomUUID())"
+node -e "console.log(crypto.randomUUID())"   # generate key
 ```
 
 Create `keys.json`:
 
 ```json
 {
-  "your-generated-uuid-here": {
+  "your-uuid": {
     "name": "media-mcp",
     "limit": "unlimited",
     "allowedServices": "all"
@@ -238,81 +261,21 @@ Create `keys.json`:
 }
 ```
 
-Update `docker-compose.yml` to add auth:
+Add to cobalt environment:
 
 ```yaml
-services:
-  cobalt:
-    image: ghcr.io/imputnet/cobalt:11
-    init: true
-    read_only: true
-    restart: unless-stopped
-    container_name: cobalt
-    ports:
-      - 9000:9000/tcp
-    environment:
-      API_URL: "http://localhost:9000/"
-      API_KEY_URL: "file:///keys.json"
-      API_AUTH_REQUIRED: 1
-    volumes:
-      - ./keys.json:/keys.json:ro
-    labels:
-      - com.centurylinklabs.watchtower.scope=cobalt
-
-  watchtower:
-    image: ghcr.io/containrrr/watchtower
-    restart: unless-stopped
-    command: --cleanup --scope cobalt --interval 900 --include-restarting
-    volumes:
-      - /var/run/docker.sock:/var/run/docker.sock
+environment:
+  API_KEY_URL: "file:///keys.json"
+  API_AUTH_REQUIRED: 1
+volumes:
+  - ./keys.json:/keys.json:ro
 ```
 
-Restart and test:
+### Adding cookies (for private content)
 
-```bash
-docker compose down && docker compose up -d
-curl -H "Authorization: Api-Key your-generated-uuid-here" \
-     -H "Content-Type: application/json" \
-     -H "Accept: application/json" \
-     -d '{"url":"https://www.instagram.com/reel/EXAMPLE/"}' \
-     http://localhost:9000/
-```
+Create `cookies.json` with your Instagram `sessionid`, mount as `/cookies.json`, and set `COOKIE_PATH: "/cookies.json"` in environment.
 
-### Adding Cookies (for Private Content)
-
-Some Instagram content requires authentication. Create `cookies.json`:
-
-```json
-{
-  "instagram.com": [
-    {
-      "name": "sessionid",
-      "value": "your_session_id_here"
-    }
-  ]
-}
-```
-
-Add to `docker-compose.yml` under cobalt environment:
-
-```yaml
-    environment:
-      COOKIE_PATH: "/cookies.json"
-    volumes:
-      - ./cookies.json:/cookies.json:ro
-```
-
-### Option 2: Cloud Server
-
-Deploy the same Docker setup on any VPS ($5/month on Hetzner, DigitalOcean, etc.):
-
-1. SSH into your server
-2. Install Docker: `curl -fsSL https://get.docker.com | sh`
-3. Follow the Docker steps above
-4. Set `COBALT_API_URL` to your server's IP: `http://your-server-ip:9000`
-5. Consider adding a reverse proxy (nginx/Caddy) with SSL for production
-
-### Production Hardening
+### Production hardening
 
 ```yaml
 environment:
@@ -323,22 +286,20 @@ environment:
   DURATION_LIMIT: 10800
 ```
 
-### Cobalt Supported Platforms
+### Supported platforms
 
-Cobalt supports 21 platforms. Currently media-mcp uses it for Instagram. Future versions will add more:
+Cobalt supports 21 platforms. Currently media-mcp uses it for Instagram. Future versions will add more: YouTube, TikTok, Twitter/X, Reddit, Facebook, Pinterest, Snapchat, Bluesky, Twitch, Vimeo, SoundCloud, Dailymotion, Tumblr, Bilibili, Loom, Streamable, Rutube, Newgrounds, OK.ru, VK.
 
-YouTube, Instagram, TikTok, Twitter/X, Reddit, Facebook, Pinterest, Snapchat, Bluesky, Twitch, Vimeo, SoundCloud, Dailymotion, Tumblr, Bilibili, Loom, Streamable, Rutube, Newgrounds, OK.ru, VK.
+## One-command setup
 
-## One-Command Setup with Claude Code
-
-Copy the contents of [PROMPT.md](./PROMPT.md) and paste it into Claude Code. It will automatically install all prerequisites, clone the repo, configure everything, and connect media-mcp to your Claude Code instance.
+Copy the contents of [PROMPT.md](./PROMPT.md) and paste it into Claude Code. It will install all prerequisites, clone the repo, configure everything, and connect media-mcp automatically.
 
 ## Development
 
 ```bash
-npm run dev       # Watch mode (recompiles on change)
-npm run build     # One-time build
-npm start         # Run the server
+npm run dev       # watch mode (recompiles on change)
+npm run build     # one-time build
+npm start         # run the server
 ```
 
 ## License

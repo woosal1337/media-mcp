@@ -69,7 +69,21 @@ Replace per-platform download logic with a single Cobalt-backed pipeline.
 | OK.ru | Video |
 | VK | Video, clips |
 
-## v1.5 — Streaming & Live Content
+## v1.5 — Web Scraping via Firecrawl
+
+Extend media-mcp beyond social media into any website. Self-hosted Firecrawl replaces Claude's limited built-in WebFetch with a proper web scraping engine.
+
+- `scrape_url` — Fetch any webpage as clean LLM-ready markdown. Handles JS-rendered pages via Playwright. Returns full content, not a summary.
+- `search_web` — Search the web and get full page content from results. Replaces the need for external search APIs.
+- `crawl_site` — Crawl an entire website from a single URL. Returns all pages as markdown.
+- `extract_data` — Extract structured JSON from any webpage using a schema. Uses local LLM (Ollama) or OpenAI.
+- `scrape_pdf` — Convert web-hosted PDFs to markdown with table and formula preservation (Fire-PDF engine, Rust-based, 5x faster).
+
+Firecrawl is open source (AGPL-3.0), self-hosted via Docker on the same server as Cobalt. No API key needed. Covers 96% of the web including JS-heavy SPAs.
+
+Why this matters: social media tools fetch structured platform data, but research, competitive analysis, and documentation ingestion require general web access. Firecrawl gives AI agents the same quality of web data as a human with a browser.
+
+## v1.6 — Streaming & Live Content
 
 - Twitter Spaces audio recording + transcription
 - Twitch clip transcription
