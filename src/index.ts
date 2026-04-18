@@ -19,6 +19,7 @@ import {
 import { fetchYouTubeTranscript } from "./youtube.js";
 import { fetchInstagramPost, isInstagramUrl, type MediaItem } from "./instagram.js";
 import { extractFrames } from "./frames.js";
+import { fetchMarkdown } from "./cloudflare.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const MODEL_PATH = process.env.WHISPER_MODEL_PATH
@@ -777,6 +778,34 @@ server.tool(
       const message = err instanceof Error ? err.message : String(err);
       return {
         content: [{ type: "text", text: `Error extracting frames: ${message}` }],
+        isError: true,
+      };
+    }
+  }
+);
+
+
+server.tool(
+  "fetch_markdown",
+  "Extract clean markdown from any webpage using Cloudflare Browser Run. Works on JS-heavy pages, SPAs, and sites where simple fetch fails. Use as a fallback when WebFetch returns empty or broken content. Requires CLOUDFLARE_ACCOUNT_ID and CLOUDFLARE_API_TOKEN env vars.",
+  {
+    url: z.string().describe("URL to extract markdown from (e.g. https://example.com/article)"),
+    wait_for_js: z.boolean().default(false).describe("Wait for JavaScript to finish rendering (slower but needed for SPAs). Default: false"),
+  },
+  async ({ url, wait_for_js }) => {
+    try {
+      const result = await fetchMarkdown(url, wait_for_js);
+
+      let output = `**Markdown extracted from:** ${result.url}\n\n`;
+      output += result.markdown;
+
+      return {
+        content: [{ type: "text", text: output }],
+      };
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : String(err);
+      return {
+        content: [{ type: "text", text: `Error extracting markdown: ${message}` }],
         isError: true,
       };
     }

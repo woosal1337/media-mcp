@@ -4,7 +4,7 @@
 
 # media-mcp
 
-Social media at your fingertips. 29 tools across Twitter/X, YouTube, Instagram, and video processing — from Claude Desktop, Claude Code, or any MCP client. 100% open source.
+Social media at your fingertips. 30 tools across Twitter/X, YouTube, Instagram, and video processing — from Claude Desktop, Claude Code, or any MCP client. 100% open source.
 
 Point it at a tweet and get the full text, metrics, and video transcription. Give it a YouTube URL and get the transcript. Drop an Instagram reel and get the media downloaded plus audio transcribed. All transcription runs locally via Whisper — no audio leaves your machine.
 
@@ -83,6 +83,8 @@ cp .env.example .env
 # WHISPER_MODEL_PATH=/absolute/path/to/models/ggml-base.bin
 # COBALT_API_URL=http://localhost:9000       (optional, for Instagram)
 # COBALT_API_KEY=your_cobalt_key             (optional)
+# CLOUDFLARE_ACCOUNT_ID=your_account_id     (optional, for fetch_markdown)
+# CLOUDFLARE_API_TOKEN=your_api_token       (optional, for fetch_markdown)
 ```
 
 ## Prerequisites
@@ -112,7 +114,9 @@ Add to `~/.claude/settings.json`:
         "TWITTER_API_KEY": "your_key",
         "WHISPER_MODEL_PATH": "/absolute/path/to/media-mcp/models/ggml-base.bin",
         "COBALT_API_URL": "http://localhost:9000",
-        "COBALT_API_KEY": "your_cobalt_key"
+        "COBALT_API_KEY": "your_cobalt_key",
+        "CLOUDFLARE_ACCOUNT_ID": "your_account_id",
+        "CLOUDFLARE_API_TOKEN": "your_api_token"
       }
     }
   }
@@ -131,6 +135,8 @@ Add to `~/Library/Application Support/Claude/claude_desktop_config.json` (macOS)
 | `WHISPER_MODEL_PATH` | No | Path to Whisper model (defaults to `./models/ggml-base.bin`) |
 | `COBALT_API_URL` | No | URL of your Cobalt instance (required for Instagram) |
 | `COBALT_API_KEY` | No | Cobalt API key if auth is enabled |
+| `CLOUDFLARE_ACCOUNT_ID` | No | Cloudflare account ID (required for `fetch_markdown`) |
+| `CLOUDFLARE_API_TOKEN` | No | Cloudflare API token with Browser Rendering permission (required for `fetch_markdown`) |
 
 ## Tools
 
@@ -187,6 +193,12 @@ Add to `~/Library/Application Support/Claude/claude_desktop_config.json` (macOS)
 | Tool | Action | What it does |
 |---|---|---|
 | `get_instagram_post` | **Download + Transcribe** | Downloads all media (images, videos, carousels) to local folder via Cobalt. Transcribes video audio with Whisper. Returns local file paths. |
+
+### Cloudflare — 1 tool
+
+| Tool | Action | What it does |
+|---|---|---|
+| `fetch_markdown` | **Extract** | Extracts clean markdown from any webpage using Cloudflare Browser Run. Works on JS-heavy pages, SPAs, and sites where simple fetch fails. |
 
 ### Video — 1 tool
 
