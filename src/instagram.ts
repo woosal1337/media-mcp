@@ -5,6 +5,8 @@ import { Readable } from "node:stream";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { randomUUID } from "node:crypto";
+import { transcribe, renderTranscript } from "./transcribe.js";
+import { cacheVideo } from "./video-cache.js";
 
 const COBALT_API_URL = process.env.COBALT_API_URL;
 const COBALT_API_KEY = process.env.COBALT_API_KEY;
@@ -143,26 +145,6 @@ function extractAudio(videoPath: string): Promise<string> {
   });
 }
 
-function transcribeAudio(audioPath: string, modelPath: string): Promise<string> {
-  return new Promise((resolve, reject) => {
-    execFile(
-      "whisper-cli",
-      [
-        "-m", modelPath,
-        "-f", audioPath,
-        "--no-timestamps",
-        "-l", "en",
-        "--output-txt",
-      ],
-      { timeout: 3600000 },
-      (error, stdout, stderr) => {
-        if (error) reject(new Error(`whisper-cli failed: ${error.message}\n${stderr}`));
-        else resolve(stdout.trim());
-      }
-    );
-  });
-}
-
 function cleanup(...paths: string[]) {
   for (const p of paths) {
     try { if (existsSync(p)) unlinkSync(p); } catch {}
@@ -176,7 +158,8 @@ async function transcribeVideo(
   let audioPath = "";
   try {
     audioPath = await extractAudio(videoPath);
-    return await transcribeAudio(audioPath, modelPath);
+    const result = await transcribe(audioPath, modelPath);
+    return renderTranscript(result);
   } finally {
     cleanup(audioPath);
   }
@@ -235,6 +218,13 @@ export async function fetchInstagramPost(
     filename: cobalt.filename,
     isCarousel,
   };
+
+  const firstVideo = media.find(
+    (m) => m.type === "video" && m.localPath && !m.localPath.startsWith("[")
+  );
+  if (firstVideo?.localPath) {
+    try { cacheVideo(url, firstVideo.localPath); } catch { /* best effort */ }
+  }
 
   if (transcribe && modelPath) {
     const videoItems = media.filter(

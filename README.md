@@ -4,17 +4,28 @@
 
 # media-mcp
 
-Social media at your fingertips. 30 tools across Twitter/X, YouTube, Instagram, and video processing — from Claude Desktop, Claude Code, or any MCP client. 100% open source.
+Social media at your fingertips. 31 tools across Twitter/X, YouTube, Instagram, and video processing — from Claude Desktop, Claude Code, or any MCP client. 100% open source.
 
 Point it at a tweet and get the full text, metrics, and video transcription. Give it a YouTube URL and get the transcript. Drop an Instagram reel and get the media downloaded plus audio transcribed. All transcription runs locally via Whisper — no audio leaves your machine.
+
+## The thesis: ears always, eyes only when the ears fail
+
+Small Whisper models are great at hearing but terrible at reading. They mishear unusual names. They can't transcribe text on screen. They skip burned-in captions. For 90% of questions about a video this doesn't matter — the gist is enough.
+
+But when a user asks *"what's the install command in this reel?"* or *"what's the handle he showed?"*, transcription alone will confidently give the wrong answer. The URL was on screen. The proper noun was spelled out in the caption. Whisper never saw any of it.
+
+media-mcp transcribes with per-token confidence via `whisper-cli -ojf` and flags **uncertainty zones** (where Whisper admits it was guessing) and **demonstrative phrases** (`"visit our"`, `"this command"`, `"in the bio"` — strong signals that on-screen content is being referenced). The LLM reads those markers and decides whether to call `get_video_frames_at` on the specific timestamps that need visual verification. Frames only come out when they need to. The LLM's own vision does the reading — no OCR, no second model.
+
+Result: the agent has ears on every video, eyes only where ears fail. Minimum frames, maximum accuracy.
 
 ## What it does
 
 - **Fetches** tweets, threads, profiles, followers, trends, and search results from Twitter/X (26 tools via TwitterAPI.io REST API)
-- **Transcribes** video audio locally using whisper-cli — downloads media, extracts audio with ffmpeg, runs Whisper on your hardware
+- **Transcribes** video audio locally using whisper-cli — downloads media, extracts audio with ffmpeg, runs Whisper on your hardware, emits **per-token confidence** and **demonstrative-phrase hits** so the LLM knows where the audio channel is unreliable
 - **Downloads** Instagram posts, reels, and carousels to local folders via a self-hosted Cobalt instance
-- **Extracts** frames from any video URL (YouTube, Twitter, TikTok, Instagram, direct MP4) at configurable FPS with optional time ranges
+- **Extracts** frames from any video URL at configurable FPS — or precisely at an array of timestamps via `get_video_frames_at` (cache-aware, no re-download on follow-ups)
 - **Monitors** Twitter users in real-time and filters tweets by keyword rules
+- **Caches** downloaded videos in `~/.media-mcp/cache/videos/` (sha256-of-URL keyed, 24h TTL) so transcription + frame-lookup on the same video happens in one download
 
 ## How it works
 
@@ -22,9 +33,9 @@ The LLM never scrapes HTML or parses DOM. Every tool calls a purpose-built API a
 
 **For text data** (tweets, profiles, trends): one REST call to TwitterAPI.io, parsed into formatted output.
 
-**For transcription** (tweet videos, YouTube, Instagram reels): the pipeline downloads media to a temp file, extracts audio with ffmpeg (16kHz mono WAV), transcribes with whisper-cli, then cleans up. For YouTube, captions are tried first (instant) — Whisper is only the fallback.
+**For transcription** (tweet videos, YouTube, Instagram reels): the pipeline downloads media to the shared cache, extracts audio with ffmpeg (16kHz mono WAV), transcribes with whisper-cli using `-ojf` (output-json-full) to preserve per-token probabilities, then returns a LLM-readable transcript with inline `⟨token p=0.XX⟩` markers plus summary blocks for uncertainty zones and demonstrative phrases. For YouTube, captions are tried first (instant) — Whisper is only the fallback.
 
-**For visual data** (Instagram images, video frames): media is downloaded to a local folder and absolute file paths are returned so the LLM can read them directly with vision.
+**For visual data** (Instagram images, video frames): media is downloaded to a local folder and absolute file paths are returned so the LLM can read them directly with vision. Frame extraction has two modes: bulk (`extract_video_frames` at configurable FPS) and precision (`get_video_frames_at` — one JPG per timestamp, for targeted verification of transcription-uncertain moments).
 
 ## Pipeline
 
@@ -33,20 +44,27 @@ URL ──► Detect platform
              │
              ├── Twitter ──► TwitterAPI.io REST ──► structured text
              │                     │
-             │               has video? ──► download ──► ffmpeg ──► whisper-cli
+             │               has video? ──► cache ──► ffmpeg ──► whisper-cli -ojf
+             │                                                         │
+             │                                       transcript + confidence markers
              │
              ├── YouTube ──► try captions (instant)
              │                     │
-             │               no captions? ──► yt-dlp ──► ffmpeg ──► whisper-cli
+             │               no captions? ──► yt-dlp ──► ffmpeg ──► whisper-cli -ojf
              │
-             ├── Instagram ──► Cobalt API ──► download media to folder
+             ├── Instagram ──► Cobalt API ──► download to cache
              │                     │
-             │               has video? ──► ffmpeg ──► whisper-cli
+             │               has video? ──► ffmpeg ──► whisper-cli -ojf
              │
-             └── Video URL ──► download ──► ffmpeg -vf fps=N ──► frame JPGs
+             ├── Video URL ──► cache ──► ffmpeg -vf fps=N ──► frame JPGs
+             │
+             └── Video URL + timestamps[] ──► cache ──► ffmpeg -ss each ──► one JPG per timestamp
+                 (for targeted verification when transcription uncertainty demands it)
 ```
 
-All transcription is local. All temp files are cleaned up. The LLM gets structured text or file paths — never raw API JSON.
+Transcription always includes per-token confidence and demonstrative-phrase scans. The LLM routes to frame extraction when those signals say it's needed.
+
+All transcription is local. All temp files are cleaned up. Downloaded videos live in a shared cache (`~/.media-mcp/cache/videos/`) for 24h so follow-up calls on the same URL don't re-download. The LLM gets structured text or file paths — never raw API JSON.
 
 ## Design principles
 
@@ -55,6 +73,8 @@ All transcription is local. All temp files are cleaned up. The LLM gets structur
 3. **Captions first, Whisper second.** Don't burn compute when the platform already did the work.
 4. **One tool, one job.** No multi-purpose tools with mode flags. Each tool does exactly one thing.
 5. **File paths for visual content.** Return absolute paths so the LLM can see images directly.
+6. **Ears always, eyes only when ears fail.** Transcription is cheap; vision tokens are expensive. The LLM sees frames only at timestamps where Whisper admits it was unsure, or where the speaker is explicitly referencing something on screen. Not at 1 fps. Not as keyframes. Exactly where accuracy actually needs it.
+7. **No OCR layer.** Claude's vision reads the frames directly. One model doing all multimodal reasoning beats a two-model seam where OCR and vision compete.
 
 See [`SKILL.md`](./SKILL.md) for the full pipeline details, tool reference, and anti-patterns.
 
@@ -200,26 +220,35 @@ Add to `~/Library/Application Support/Claude/claude_desktop_config.json` (macOS)
 |---|---|---|
 | `fetch_markdown` | **Extract** | Extracts clean markdown from any webpage using Cloudflare Browser Run. Works on JS-heavy pages, SPAs, and sites where simple fetch fails. |
 
-### Video — 1 tool
+### Video — 2 tools
 
 | Tool | Action | What it does |
 |---|---|---|
-| `extract_video_frames` | **Download + Extract** | Downloads video from any URL, extracts frames at configurable FPS via ffmpeg. Supports time ranges. Returns local frame paths. |
+| `extract_video_frames` | **Download + Extract** | Downloads video from any URL, extracts frames at configurable FPS via ffmpeg. Supports time ranges. Returns local frame paths. Cache-aware. |
+| `get_video_frames_at` | **Precision Extract** | Grabs one JPG per specified timestamp. Pairs with the transcription tools — when the transcript flags uncertainty zones or demonstrative phrases, pass their `midpoint_s` values here and the LLM reads the JPGs with its own vision. Cache-aware (no re-download on follow-ups). |
 
 ## How transcription works
 
 ```
-video file ──► ffmpeg -ar 16000 -ac 1 -f wav ──► whisper-cli -m model ──► text
+video → cache → ffmpeg -ar 16000 -ac 1 → audio.wav → whisper-cli -ojf → audio.wav.json
                                                                             │
-                                                                   temp files cleaned up
+                                                                            ▼
+                                                         parse per-token probabilities
+                                                                            │
+                                                                            ▼
+                                        transcript with ⟨token p=0.XX⟩ markers
+                                        + Uncertainty zones summary (midpoint_s each)
+                                        + Demonstrative phrases block (midpoint_s each)
 ```
 
-1. Video is downloaded to a temp file
+1. Video is downloaded to `~/.media-mcp/cache/videos/<sha256>.mp4` (reused if present, <24h old)
 2. ffmpeg extracts audio as 16kHz mono WAV
-3. whisper-cli transcribes locally using the Whisper model
-4. Temp files are cleaned up automatically
+3. whisper-cli transcribes locally with `-ojf` (output-json-full) — JSON includes per-token `p` values
+4. Tokens below p=0.5 are merged into contiguous spans (≤150ms gap) and reported as uncertainty zones
+5. The segment text is scanned for demonstrative phrases that typically reference on-screen content
+6. The LLM receives segment-level transcript + uncertainty zones + demonstrative hits, and decides whether to call `get_video_frames_at` with the relevant timestamps
 
-For YouTube, captions are tried first (instant). Whisper is only used when no captions exist. All transcription happens locally — no audio is sent to external services.
+For YouTube, captions are tried first (instant, already timestamped). Whisper is the fallback. All transcription happens locally — no audio is sent to external services.
 
 ## Cobalt setup
 

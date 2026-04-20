@@ -18,7 +18,7 @@ import {
 } from "./twitter.js";
 import { fetchYouTubeTranscript } from "./youtube.js";
 import { fetchInstagramPost, isInstagramUrl, type MediaItem } from "./instagram.js";
-import { extractFrames } from "./frames.js";
+import { extractFrames, extractFramesAtTimestamps } from "./frames.js";
 import { fetchMarkdown } from "./cloudflare.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -107,7 +107,7 @@ const server = new McpServer({
 
 server.tool(
   "get_tweet",
-  "Fetch a tweet by URL. Returns tweet text, author info, metrics, and media. If the tweet contains a video, automatically transcribes the audio and includes the transcription. Also fetches quoted tweets, threads, and Twitter articles.",
+  "Fetch a tweet by URL. Returns tweet text, author info, metrics, and media. If the tweet contains a video, automatically transcribes the audio with segment-level timestamps AND per-token confidence — the output includes **Uncertainty zones** (spans where Whisper is guessing, with midpoint_s timestamps) and **Demonstrative phrases** ('visit our', 'this command', 'in the bio'). When those appear and matter to the user's question, follow up with `get_video_frames_at` using the midpoint_s values to verify visually. Also fetches quoted tweets, threads, and Twitter articles.",
   {
     url: z.string().describe("Twitter/X URL (e.g. https://x.com/user/status/123)"),
     transcribe: z.boolean().default(true).describe("Whether to transcribe video content (default: true)"),
@@ -654,7 +654,7 @@ server.tool(
 
 server.tool(
   "get_youtube_transcript",
-  "Fetch the transcript/subtitles of a YouTube video. First tries YouTube captions (instant). If no captions exist, downloads the audio and transcribes locally with Whisper.",
+  "Fetch the transcript/subtitles of a YouTube video with timestamps. First tries YouTube captions (instant, already timestamped). If no captions exist, downloads the audio and transcribes locally with Whisper, producing segment-level timestamps AND per-token confidence — the output includes **Uncertainty zones** (spans where Whisper is guessing, with midpoint_s timestamps) and **Demonstrative phrases** that often reference on-screen content. When those appear and matter to the user's question, follow up with `get_video_frames_at` using the midpoint_s values to verify visually.",
   {
     url: z.string().describe("YouTube URL (e.g. https://www.youtube.com/watch?v=abc123)"),
   },
@@ -692,7 +692,7 @@ server.tool(
 
 server.tool(
   "get_instagram_post",
-  "Fetch an Instagram post or reel by URL. Downloads ALL media (carousel images, videos) to a local folder with a unique ID. Videos are transcribed with Whisper. Returns local file paths so Claude can read/analyze the images directly. Supports single posts, reels, and carousel posts with multiple images/videos.",
+  "Fetch an Instagram post or reel by URL. Downloads ALL media (carousel images, videos) to a local folder with a unique ID. Videos are transcribed with Whisper with segment-level timestamps AND per-token confidence — the output includes **Uncertainty zones** (spans where Whisper is guessing, with midpoint_s timestamps) and **Demonstrative phrases** ('visit our', 'this link', 'in the bio') that usually reference on-screen content. When those appear and matter to the user's question (install commands, URLs, handles, proper nouns), follow up with `get_video_frames_at` using the midpoint_s values to verify visually — Claude reads the JPGs directly with vision. The video is cached by URL so follow-up frame requests don't re-download. Supports single posts, reels, and carousel posts with multiple images/videos.",
   {
     url: z.string().describe("Instagram URL (e.g. https://www.instagram.com/reel/XXXXX/ or https://www.instagram.com/p/XXXXX/)"),
     transcribe: z.boolean().default(true).describe("Whether to transcribe video content (default: true)"),
@@ -774,6 +774,37 @@ server.tool(
       return {
         content: [{ type: "text", text: output }],
       };
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : String(err);
+      return {
+        content: [{ type: "text", text: `Error extracting frames: ${message}` }],
+        isError: true,
+      };
+    }
+  }
+);
+
+
+server.tool(
+  "get_video_frames_at",
+  "Precision frame extraction — grab ONE frame at each specified timestamp from a video URL. Use this as the companion to the transcription tools (get_tweet, get_youtube_transcript, get_instagram_post) to verify on-screen content at timestamps where transcription is unreliable. Triggers: (1) the transcript reported **Uncertainty zones** — call this with the `midpoint_s` values from those zones to see what Whisper couldn't hear; (2) the transcript has **Demonstrative phrases** like 'visit our', 'this command', 'in the bio' — those words reference on-screen content; (3) the user's question depends on exact on-screen info (install commands, URLs, handles, prices, product/brand spelling, code snippets). Returns one JPG path per timestamp so Claude can view the frames directly with its vision. The video is pulled from cache when available — no re-download after a prior fetch on the same URL.",
+  {
+    url: z.string().describe("Video URL (YouTube, Instagram, Twitter, TikTok, or direct MP4 URL). Same URL as previously fetched = cache hit, no re-download."),
+    timestamps: z.array(z.number()).min(1).describe("Array of timestamps in seconds. Typically sourced from the 'midpoint_s' values in a transcript's Uncertainty zones or Demonstrative phrases. Keep it minimal — each frame costs vision tokens."),
+  },
+  async ({ url, timestamps }) => {
+    try {
+      const result = await extractFramesAtTimestamps(url, timestamps);
+      let output = `**Precision Frame Extraction**\n`;
+      output += `**Source:** ${url}\n`;
+      output += `**Video Duration:** ${result.videoDuration.toFixed(1)}s\n`;
+      output += `**From Cache:** ${result.fromCache ? "yes (no re-download)" : "no (downloaded fresh)"}\n`;
+      output += `**Frames:** ${result.frames.length}\n`;
+      output += `**Folder:** ${result.folder}\n\n`;
+      for (const f of result.frames) {
+        output += `- [${f.timestamp_s.toFixed(2)}s] ${f.path}\n`;
+      }
+      return { content: [{ type: "text", text: output }] };
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : String(err);
       return {

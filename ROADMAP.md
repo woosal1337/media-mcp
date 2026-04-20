@@ -1,15 +1,32 @@
 # Roadmap
 
-## Current State (v1.0)
+## Current State (v1.1 — Ears always, eyes when needed)
 
 | Platform | Tools | Media Download | Transcription |
 |---|---|---|---|
-| Twitter/X | 26 tools (tweets, profiles, search, trends, monitoring, filters) | Video via direct fetch | Whisper (local) |
-| YouTube | 1 tool (transcript) | Audio via yt-dlp | Captions or Whisper |
-| Instagram | 1 tool (post/reel/carousel) | Images + video via Cobalt | Whisper (local) |
-| Any video URL | 1 tool (frame extraction) | Video via yt-dlp or direct fetch | N/A (frames only) |
+| Twitter/X | 26 tools (tweets, profiles, search, trends, monitoring, filters) | Video via direct fetch, cached 24h | Whisper (local) with per-token confidence |
+| YouTube | 1 tool (transcript) | Audio via yt-dlp | Captions (instant) or Whisper with per-token confidence |
+| Instagram | 1 tool (post/reel/carousel) | Images + video via Cobalt, cached 24h | Whisper (local) with per-token confidence |
+| Any video URL | 2 tools (bulk + precision frame extraction) | Video via yt-dlp or direct fetch, cached 24h | N/A (frames only) |
+| Any webpage | 1 tool (Cloudflare Browser Run markdown) | — | — |
 
-## v1.1 — TikTok Support
+### What shipped in v1.1
+
+- **Per-token Whisper confidence.** All transcription tools now use `whisper-cli -ojf` (output-json-full) and parse per-token probabilities.
+- **Uncertainty zones.** Contiguous runs of tokens below the confidence threshold (default p < 0.5, merged within 150ms) are surfaced with `midpoint_s` timestamps the LLM can feed to the precision frame tool.
+- **Demonstrative-phrase detection.** Regex scan for phrases like "visit our", "this command", "in the bio" that signal on-screen content is being referenced without transcription capturing it.
+- **`get_video_frames_at` tool.** Precision frame extraction — one JPG per requested timestamp. The natural companion to the transcription tools when an uncertainty zone or demonstrative phrase matters to the user's question. Claude reads the JPGs directly with its own vision; no OCR layer.
+- **Shared video cache.** `~/.media-mcp/cache/videos/` keyed by sha256-of-URL, 24h TTL. A video fetched by `get_instagram_post` is reused by `get_video_frames_at` on a follow-up — no re-download.
+
+### The thesis behind v1.1
+
+Transcription is cheap; vision tokens are expensive. For 90% of video questions the transcript is enough. For the other 10% — install commands, URLs, handles, code snippets, unusual proper nouns, anything written on screen but not said aloud — Whisper will confidently give the wrong answer.
+
+The LLM needs a way to know *when* its ears are insufficient. v1.1 gives it two signals: Whisper's own confidence (hard signal), and demonstrative phrases (soft signal). Both arrive with exact timestamps. The LLM's own vision handles the reading — no OCR seam.
+
+Result: an agent that has ears on every video, eyes only where ears fail. Minimum frames, maximum accuracy.
+
+## v1.2 — TikTok Support
 
 Cobalt already handles TikTok with watermark removal, slideshow images, and original audio.
 
@@ -18,14 +35,14 @@ Cobalt already handles TikTok with watermark removal, slideshow images, and orig
 - Automatic watermark-free downloads via Cobalt
 - Whisper transcription for video audio
 
-## v1.2 — Reddit & Bluesky
+## v1.3 — Reddit and Bluesky
 
 Both supported by Cobalt out of the box.
 
 - `get_reddit_post` — Download Reddit video/GIF by URL with transcription
 - `get_bluesky_post` — Fetch Bluesky post with media download and transcription
 
-## v1.3 — Facebook, Pinterest, Snapchat
+## v1.4 — Facebook, Pinterest, Snapchat
 
 Cobalt covers all three.
 
@@ -33,7 +50,7 @@ Cobalt covers all three.
 - `get_pinterest_media` — Download pins (photos, GIFs, videos, stories)
 - `get_snapchat_spotlight` — Download Snapchat spotlights and stories
 
-## v1.4 — Unified Media Pipeline
+## v1.5 — Unified Media Pipeline
 
 Replace per-platform download logic with a single Cobalt-backed pipeline.
 
@@ -69,7 +86,7 @@ Replace per-platform download logic with a single Cobalt-backed pipeline.
 | OK.ru | Video |
 | VK | Video, clips |
 
-## v1.5 — Web Scraping via Firecrawl
+## v1.6 — Web Scraping via Firecrawl
 
 Extend media-mcp beyond social media into any website. Self-hosted Firecrawl replaces Claude's limited built-in WebFetch with a proper web scraping engine.
 
@@ -83,7 +100,7 @@ Firecrawl is open source (AGPL-3.0), self-hosted via Docker on the same server a
 
 Why this matters: social media tools fetch structured platform data, but research, competitive analysis, and documentation ingestion require general web access. Firecrawl gives AI agents the same quality of web data as a human with a browser.
 
-## v1.6 — Streaming & Live Content
+## v1.7 — Streaming and Live Content
 
 - Twitter Spaces audio recording + transcription
 - Twitch clip transcription

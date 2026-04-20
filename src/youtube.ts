@@ -3,6 +3,7 @@ import { unlinkSync, existsSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { randomUUID } from "node:crypto";
+import { transcribe, renderTranscript } from "./transcribe.js";
 
 const { fetchTranscript } = await import(
   "youtube-transcript/dist/youtube-transcript.esm.js"
@@ -57,26 +58,6 @@ function downloadAudioWithYtDlp(videoId: string): Promise<string> {
   });
 }
 
-function transcribeAudio(audioPath: string, modelPath: string): Promise<string> {
-  return new Promise((resolve, reject) => {
-    execFile(
-      "whisper-cli",
-      [
-        "-m", modelPath,
-        "-f", audioPath,
-        "--no-timestamps",
-        "-l", "en",
-        "--output-txt",
-      ],
-      { timeout: 3600000 },
-      (error, stdout, stderr) => {
-        if (error) reject(new Error(`whisper-cli failed: ${error.message}\n${stderr}`));
-        else resolve(stdout.trim());
-      }
-    );
-  });
-}
-
 function cleanup(...paths: string[]) {
   for (const p of paths) {
     try { if (existsSync(p)) unlinkSync(p); } catch {}
@@ -90,7 +71,8 @@ async function transcribeYouTubeVideo(
   let audioPath = "";
   try {
     audioPath = await downloadAudioWithYtDlp(videoId);
-    return await transcribeAudio(audioPath, modelPath);
+    const result = await transcribe(audioPath, modelPath);
+    return renderTranscript(result);
   } finally {
     cleanup(audioPath);
   }

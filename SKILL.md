@@ -1,6 +1,6 @@
 ---
 name: media-mcp
-description: Social media at your fingertips. Fetch tweets, transcribe videos, extract frames, download Instagram posts — from any MCP client. 29 tools across Twitter/X, YouTube, Instagram, and video processing. All transcription runs locally via Whisper. No data leaves your machine.
+description: Social media at your fingertips. Fetch tweets, transcribe videos with per-token confidence, extract frames at exact timestamps, download Instagram posts — from any MCP client. 30 tools across Twitter/X, YouTube, Instagram, and video processing. All transcription runs locally via Whisper with uncertainty markers so Claude can target frame extraction. No data leaves your machine.
 ---
 
 # Media MCP
@@ -13,6 +13,7 @@ description: Social media at your fingertips. Fetch tweets, transcribe videos, e
 4. **Download then process.** Media is downloaded to a temp file, processed (transcribed, frame-extracted), and cleaned up. No streaming pipelines, no partial results. The user gets complete output or a clear error.
 5. **One tool, one job.** Each tool does exactly one thing. `get_tweet` fetches a tweet. `get_youtube_transcript` gets a transcript. `extract_video_frames` pulls frames. No multi-purpose tools, no mode flags that change behavior.
 6. **Return file paths for visual content.** When downloading images or extracting frames, return absolute local paths so the LLM can read them directly with its vision capabilities. Don't describe images — let the model see them.
+7. **Confidence-driven accuracy.** Transcription always carries per-token probabilities and surfaces **Uncertainty zones** — the exact time spans where Whisper was guessing. When accuracy matters (proper nouns, URLs, install commands, on-screen text), Claude calls `get_video_frames_at` on those specific timestamps and reads the resulting frames with its own vision. No OCR — Claude's vision is the single model that does all multimodal reasoning. Minimum frames, maximum accuracy.
 
 ## Architecture
 
@@ -68,7 +69,7 @@ URL ──► TwitterAPI.io REST ──► parse tweet JSON ──► extract me
                                                                      return text + metrics
 ```
 
-**What it does:** Fetches tweet text, author info, metrics (likes/RT/views), media URLs, threads, quoted tweets, and articles via REST API. If the tweet contains video and `transcribe: true`, downloads the video to a temp file, extracts audio with ffmpeg (16kHz mono WAV), transcribes with whisper-cli, then cleans up.
+**What it does:** Fetches tweet text, author info, metrics (likes/RT/views), media URLs, threads, quoted tweets, and articles via REST API. If the tweet contains video and `transcribe: true`, downloads the video to a temp file, extracts audio with ffmpeg (16kHz mono WAV), transcribes with whisper-cli (segment-level timestamps included), then cleans up.
 
 **Latency:** ~1s for text-only tweets. ~10-30s when video transcription is involved (download + ffmpeg + Whisper).
 
@@ -88,7 +89,7 @@ URL ──► extract video ID
         return text + segments + source indicator
 ```
 
-**What it does:** First tries YouTube's built-in caption system (free, instant, accurate). If no captions exist, falls back to downloading audio with yt-dlp, extracting with ffmpeg, and transcribing with whisper-cli.
+**What it does:** First tries YouTube's built-in caption system (free, instant, accurate — already timestamped). If no captions exist, falls back to downloading audio with yt-dlp, extracting with ffmpeg, and transcribing with whisper-cli (segment-level timestamps included).
 
 **Latency:** ~200ms with captions. ~20-60s with Whisper fallback (depends on video length).
 
@@ -107,7 +108,7 @@ URL ──► Cobalt API ──► get download URLs + metadata
            return local file paths (absolute)
 ```
 
-**What it does:** Sends the Instagram URL to your self-hosted Cobalt instance. Cobalt returns download URLs for all media items. Each item is downloaded to a local folder with a unique ID. Videos are optionally transcribed with Whisper. Returns absolute file paths so the LLM can view images directly.
+**What it does:** Sends the Instagram URL to your self-hosted Cobalt instance. Cobalt returns download URLs for all media items. Each item is downloaded to a local folder with a unique ID. Videos are optionally transcribed with Whisper (segment-level timestamps included). Returns absolute file paths so the LLM can view images directly.
 
 **Requires:** Self-hosted Cobalt instance (`COBALT_API_URL`).
 
@@ -140,7 +141,7 @@ All Twitter tools call the TwitterAPI.io REST API. Requires `TWITTER_API_KEY`.
 
 | Tool | What it does | Returns |
 |---|---|---|
-| `get_tweet` | **Fetches** a single tweet by URL. Parses text, author, metrics, media, threads, quoted tweets, articles. **Transcribes** video if present. | Text + metrics + media URLs + transcription |
+| `get_tweet` | **Fetches** a single tweet by URL. Parses text, author, metrics, media, threads, quoted tweets, articles. **Transcribes** video if present, with segment-level timestamps. | Text + metrics + media URLs + timestamped transcription |
 | `get_user_tweets` | **Fetches** recent tweets from a user (paginated, 20/page) | Tweet list with text + metrics |
 | `search_tweets` | **Searches** tweets with advanced query operators (`from:`, `to:`, `#hashtag`, `min_faves:`, date ranges) | Tweet list with text + metrics |
 | `get_tweet_replies` | **Fetches** replies to a tweet (paginated, 20/page) | Reply list with authors + text |
@@ -188,13 +189,14 @@ Requires self-hosted Cobalt instance (`COBALT_API_URL`).
 
 | Tool | What it does | Returns |
 |---|---|---|
-| `get_instagram_post` | **Downloads** post media (images, videos, carousels) to local folder via Cobalt. **Transcribes** video audio with Whisper. | Local file paths + transcription |
+| `get_instagram_post` | **Downloads** post media (images, videos, carousels) to local folder via Cobalt. **Transcribes** video audio with Whisper, segment-level timestamps. | Local file paths + timestamped transcription |
 
-### Video — 1 tool
+### Video — 2 tools
 
 | Tool | What it does | Returns |
 |---|---|---|
-| `extract_video_frames` | **Downloads** video from any URL (YouTube, Instagram, Twitter, TikTok, direct). **Extracts** frames at configurable FPS with optional time range via ffmpeg. | Local frame paths + timestamps |
+| `extract_video_frames` | **Downloads** video from any URL (YouTube, Instagram, Twitter, TikTok, direct). **Extracts** frames at configurable FPS with optional time range via ffmpeg. Uses the shared video cache — no re-download on repeat calls. | Local frame paths + timestamps |
+| `get_video_frames_at` | **Precision mode** — one frame per requested timestamp. Pair with the transcription tools: pass the `midpoint_s` from Uncertainty zones / Demonstrative phrases to visually verify what Whisper missed. Claude then reads the JPGs with its own vision. Cache-aware. | One local JPG path per timestamp |
 
 ## Dependencies
 
@@ -211,10 +213,40 @@ Requires self-hosted Cobalt instance (`COBALT_API_URL`).
 
 1. Video is downloaded to a temp file (via direct HTTP, yt-dlp, or Cobalt)
 2. ffmpeg extracts audio as 16kHz mono WAV: `ffmpeg -i video.mp4 -ar 16000 -ac 1 -f wav audio.wav`
-3. whisper-cli transcribes locally: `whisper-cli -m <model> -f audio.wav --no-timestamps`
+3. whisper-cli transcribes locally with segment-level timestamps AND per-token confidence: `whisper-cli -m <model> -f audio.wav -l en -ojf`. Per-token probabilities are parsed; tokens with `p < 0.5` are flagged. Output is rendered as: `[HH:MM:SS.mmm --> HH:MM:SS.mmm]  text with ⟨uncertain-token p=0.XX⟩ markers` followed by an **Uncertainty zones** summary and **Demonstrative phrases** block.
 4. Temp files (video + audio) are cleaned up automatically
 
 All transcription happens on your machine. No audio is sent to external services.
+
+## Accuracy-critical workflow — confidence-driven frame lookup
+
+Transcription is fast but not infallible. Small Whisper models (base, ~140MB) will mishear unusual proper nouns, rare URLs, and written-only content. Rather than ship a separate OCR pipeline, media-mcp exposes Whisper's **own uncertainty** and lets Claude decide when to look at frames.
+
+**The two-tool pattern:**
+
+1. **Any transcription tool** (`get_tweet`, `get_instagram_post`, `get_youtube_transcript`) returns:
+   - Segment-level timestamped transcript
+   - Inline `⟨token p=0.XX⟩` markers where Whisper was below confidence threshold (default 0.5)
+   - An **Uncertainty zones** summary with `midpoint_s` timestamps
+   - A **Demonstrative phrases** block (phrases like "visit our", "this command", "in the bio" — strong signals that on-screen content is being referenced)
+
+2. **`get_video_frames_at(url, timestamps[])`** — precision frame extraction. Pass the `midpoint_s` values from the uncertainty zones or demonstrative phrases. Returns one JPG per timestamp. Claude reads the JPGs directly with its vision.
+
+**When to trigger frame lookup (Claude's decision):**
+
+- The user's question depends on an uncertain span (typically: proper nouns, install commands, URLs, handles, prices, code snippets, brand spellings).
+- A demonstrative phrase appears near content the user is asking about.
+- The user asks "what exactly did they show" / "what's the link" / "what's the command".
+
+**When NOT to trigger frame lookup:**
+
+- The transcript is entirely high-confidence for content the user cares about.
+- The user asked for a summary / opinion / vibe — audio is sufficient.
+- Uncertainty zones fall in filler phrases ("um", "you know") that don't matter to the answer.
+
+**Video cache:** every transcription tool caches the downloaded video under a hash of the URL at `~/.media-mcp/cache/videos/` (24h TTL). When `get_video_frames_at` is called on the same URL, it reuses the cached video — no re-download.
+
+**Example — the canonical test case.** User shares an Instagram reel about three Claude Code skills. Whisper (base) hears `Emil Koval skill` (p=0.33 on "val") — that's wrong; the screen shows `npx skills add emilkowalski/skill`. Transcript flags the uncertainty zone at ~5.58s. Claude calls `get_video_frames_at(url, [5.58, 22.27, 33.59])`, reads three JPGs with its vision, and reports the correct install slugs: `emilkowalski/skill`, `pbakaus/impeccable`, `tasteskill.dev`.
 
 ## Anti-patterns
 

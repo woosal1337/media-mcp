@@ -101,7 +101,11 @@ Tell me to restart Claude Code (or open a new session) so the MCP server loads. 
 
 **Instagram (1 tool):** get_instagram_post (requires Cobalt)
 
-**Video (1 tool):** extract_video_frames
+**Video (2 tools):** extract_video_frames, get_video_frames_at
+
+**Cloudflare (1 tool):** fetch_markdown (requires Cloudflare Browser Run keys)
+
+All three transcription tools (`get_tweet`, `get_youtube_transcript`, `get_instagram_post`) emit per-token Whisper confidence alongside the transcript. When the transcript flags **Uncertainty zones** or **Demonstrative phrases**, follow up with `get_video_frames_at` at those exact timestamps — you read the JPGs directly with vision and recover the on-screen text that transcription missed. Video downloads are cached at `~/.media-mcp/cache/videos/` so the follow-up call never re-downloads.
 
 ## Optional: Deploy Cobalt for Instagram support
 

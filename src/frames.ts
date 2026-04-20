@@ -5,6 +5,7 @@ import { Readable } from "node:stream";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { randomUUID } from "node:crypto";
+import { cacheVideo, getCachedVideoPath } from "./video-cache.js";
 
 export interface FrameExtractionResult {
   folder: string;
@@ -131,12 +132,14 @@ export async function extractFrames(
 
   const needsYtDlp = useYtDlp ?? /(?:youtube\.com|youtu\.be|instagram\.com|twitter\.com|x\.com|tiktok\.com|reddit\.com|vimeo\.com)/.test(videoUrl);
 
-  let videoPath = "";
+  let videoPath = getCachedVideoPath(videoUrl) ?? "";
+  const usedCache = Boolean(videoPath);
   try {
-    if (needsYtDlp) {
-      videoPath = await downloadVideoWithYtDlp(videoUrl);
-    } else {
-      videoPath = await downloadVideoToTemp(videoUrl);
+    if (!videoPath) {
+      videoPath = needsYtDlp
+        ? await downloadVideoWithYtDlp(videoUrl)
+        : await downloadVideoToTemp(videoUrl);
+      try { cacheVideo(videoUrl, videoPath); } catch { /* best effort */ }
     }
 
     const duration = await getVideoDuration(videoPath);
@@ -165,6 +168,70 @@ export async function extractFrames(
       videoDuration: duration,
     };
   } finally {
-    cleanup(videoPath);
+    if (!usedCache) cleanup(videoPath);
+  }
+}
+
+export interface FrameAtResult {
+  folder: string;
+  frames: Array<{ timestamp_s: number; path: string }>;
+  videoDuration: number;
+  fromCache: boolean;
+}
+
+export async function extractFramesAtTimestamps(
+  videoUrl: string,
+  timestamps: number[],
+  useYtDlp?: boolean
+): Promise<FrameAtResult> {
+  if (timestamps.length === 0) {
+    throw new Error("timestamps[] must contain at least one value");
+  }
+
+  const folderId = randomUUID();
+  const outputFolder = join(tmpdir(), `media-mcp-frames-at-${folderId}`);
+  mkdirSync(outputFolder, { recursive: true });
+
+  let videoPath = getCachedVideoPath(videoUrl);
+  let fromCache = Boolean(videoPath);
+  let downloadedFresh = false;
+
+  try {
+    if (!videoPath) {
+      const needsYtDlp = useYtDlp ?? /(?:youtube\.com|youtu\.be|instagram\.com|twitter\.com|x\.com|tiktok\.com|reddit\.com|vimeo\.com)/.test(videoUrl);
+      videoPath = needsYtDlp
+        ? await downloadVideoWithYtDlp(videoUrl)
+        : await downloadVideoToTemp(videoUrl);
+      downloadedFresh = true;
+      try { cacheVideo(videoUrl, videoPath); } catch { /* best effort */ }
+    }
+
+    const duration = await getVideoDuration(videoPath);
+    const frames: Array<{ timestamp_s: number; path: string }> = [];
+
+    for (let i = 0; i < timestamps.length; i++) {
+      const t = timestamps[i];
+      if (t < 0) throw new Error(`timestamp ${t}s must be >= 0`);
+      if (t > duration) throw new Error(`timestamp ${t}s exceeds video duration ${duration.toFixed(2)}s`);
+      const path = join(outputFolder, `frame_${String(i).padStart(3, "0")}_${t.toFixed(2)}s.jpg`);
+      await new Promise<void>((resolve, reject) => {
+        execFile(
+          "ffmpeg",
+          ["-ss", t.toString(), "-i", videoPath!, "-frames:v", "1", "-q:v", "2", "-y", path],
+          { timeout: 60000 },
+          (error, _stdout, stderr) => {
+            if (error) reject(new Error(`ffmpeg failed at t=${t}s: ${error.message}\n${stderr}`));
+            else resolve();
+          }
+        );
+      });
+      frames.push({ timestamp_s: t, path });
+    }
+
+    return { folder: outputFolder, frames, videoDuration: duration, fromCache };
+  } finally {
+    if (downloadedFresh && !fromCache) {
+      if (videoPath && !videoPath.includes(".media-mcp/cache/")) cleanup(videoPath);
+    }
   }
 }

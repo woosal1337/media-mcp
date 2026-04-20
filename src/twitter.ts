@@ -5,6 +5,8 @@ import { Readable } from "node:stream";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { randomUUID } from "node:crypto";
+import { transcribe, renderTranscript, type TranscriptResult } from "./transcribe.js";
+import { cacheVideo, getCachedVideoPath } from "./video-cache.js";
 
 const TWITTER_API_BASE = "https://api.twitterapi.io";
 const TWEETS_ENDPOINT = `${TWITTER_API_BASE}/twitter/tweets`;
@@ -217,26 +219,6 @@ function extractAudio(videoPath: string): Promise<string> {
   });
 }
 
-function transcribeAudio(audioPath: string, modelPath: string): Promise<string> {
-  return new Promise((resolve, reject) => {
-    execFile(
-      "whisper-cli",
-      [
-        "-m", modelPath,
-        "-f", audioPath,
-        "--no-timestamps",
-        "-l", "en",
-        "--output-txt",
-      ],
-      { timeout: 3600000 },
-      (error, stdout, stderr) => {
-        if (error) reject(new Error(`whisper-cli failed: ${error.message}\n${stderr}`));
-        else resolve(stdout.trim());
-      }
-    );
-  });
-}
-
 function cleanup(...paths: string[]) {
   for (const p of paths) {
     try { if (existsSync(p)) unlinkSync(p); } catch {}
@@ -247,14 +229,28 @@ export async function transcribeVideo(
   videoUrl: string,
   modelPath: string
 ): Promise<string> {
-  let videoPath = "";
+  const result = await transcribeVideoStructured(videoUrl, modelPath);
+  return renderTranscript(result);
+}
+
+export async function transcribeVideoStructured(
+  videoUrl: string,
+  modelPath: string
+): Promise<TranscriptResult> {
+  let videoPath = getCachedVideoPath(videoUrl);
+  let downloadedFresh = false;
   let audioPath = "";
   try {
-    videoPath = await downloadVideo(videoUrl);
+    if (!videoPath) {
+      videoPath = await downloadVideo(videoUrl);
+      downloadedFresh = true;
+      cacheVideo(videoUrl, videoPath);
+    }
     audioPath = await extractAudio(videoPath);
-    return await transcribeAudio(audioPath, modelPath);
+    return await transcribe(audioPath, modelPath);
   } finally {
-    cleanup(videoPath, audioPath);
+    if (downloadedFresh && videoPath) cleanup(videoPath);
+    if (audioPath) cleanup(audioPath);
   }
 }
 
