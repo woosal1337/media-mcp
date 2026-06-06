@@ -26,13 +26,14 @@ const MODEL_PATH = process.env.WHISPER_MODEL_PATH
   ?? join(__dirname, "..", "models", "ggml-base.bin");
 
 const TWITTER_API_KEY = process.env.TWITTER_API_KEY;
+const XQUIK_API_KEY = process.env.XQUIK_API_KEY;
 
-if (!TWITTER_API_KEY) {
-  console.error("TWITTER_API_KEY environment variable is required");
+if (!TWITTER_API_KEY && !XQUIK_API_KEY) {
+  console.error("TWITTER_API_KEY or XQUIK_API_KEY environment variable is required");
   process.exit(1);
 }
 
-const apiKey: string = TWITTER_API_KEY;
+const apiKey: string = TWITTER_API_KEY ?? XQUIK_API_KEY ?? "";
 
 function formatMedia(media: ProcessedMedia[]): string {
   let out = "";

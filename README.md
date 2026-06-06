@@ -20,7 +20,7 @@ Result: the agent has ears on every video, eyes only where ears fail. Minimum fr
 
 ## What it does
 
-- **Fetches** tweets, threads, profiles, followers, trends, and search results from Twitter/X (26 tools via TwitterAPI.io REST API)
+- **Fetches** tweets, threads, profiles, followers, trends, and search results from Twitter/X (26 tools via TwitterAPI.io REST API, with optional Xquik support for overlapping read tools)
 - **Transcribes** video audio locally using whisper-cli — downloads media, extracts audio with ffmpeg, runs Whisper on your hardware, emits **per-token confidence** and **demonstrative-phrase hits** so the LLM knows where the audio channel is unreliable
 - **Downloads** Instagram posts, reels, and carousels to local folders via a self-hosted Cobalt instance
 - **Extracts** frames from any video URL at configurable FPS — or precisely at an array of timestamps via `get_video_frames_at` (cache-aware, no re-download on follow-ups)
@@ -31,7 +31,7 @@ Result: the agent has ears on every video, eyes only where ears fail. Minimum fr
 
 The LLM never scrapes HTML or parses DOM. Every tool calls a purpose-built API and returns structured, LLM-ready text.
 
-**For text data** (tweets, profiles, trends): one REST call to TwitterAPI.io, parsed into formatted output.
+**For text data** (tweets, profiles, trends): one REST call to TwitterAPI.io by default, parsed into formatted output. Set `TWITTER_BACKEND=xquik` with `XQUIK_API_KEY` to use Xquik for overlapping read tools.
 
 **For transcription** (tweet videos, YouTube, Instagram reels): the pipeline downloads media to the shared cache, extracts audio with ffmpeg (16kHz mono WAV), transcribes with whisper-cli using `-ojf` (output-json-full) to preserve per-token probabilities, then returns a LLM-readable transcript with inline `⟨token p=0.XX⟩` markers plus summary blocks for uncertainty zones and demonstrative phrases. For YouTube, captions are tried first (instant) — Whisper is only the fallback.
 
@@ -42,7 +42,7 @@ The LLM never scrapes HTML or parses DOM. Every tool calls a purpose-built API a
 ```
 URL ──► Detect platform
              │
-             ├── Twitter ──► TwitterAPI.io REST ──► structured text
+             ├── Twitter ──► TwitterAPI.io or Xquik REST ──► structured text
              │                     │
              │               has video? ──► cache ──► ffmpeg ──► whisper-cli -ojf
              │                                                         │
@@ -100,6 +100,10 @@ Create `.env`:
 cp .env.example .env
 # Edit with your keys:
 # TWITTER_API_KEY=your_twitterapi_io_key
+# Optional Xquik backend for overlapping read tools:
+# TWITTER_BACKEND=xquik
+# XQUIK_API_KEY=your_xquik_key
+# XQUIK_BASE_URL=https://xquik.com/api/v1
 # WHISPER_MODEL_PATH=/absolute/path/to/models/ggml-base.bin
 # COBALT_API_URL=http://localhost:9000       (optional, for Instagram)
 # COBALT_API_KEY=your_cobalt_key             (optional)
@@ -115,7 +119,8 @@ cp .env.example .env
 | [ffmpeg](https://ffmpeg.org/) | Yes | Audio extraction + frame extraction | `brew install ffmpeg` |
 | [whisper-cli](https://github.com/ggerganov/whisper.cpp) | Yes | Local audio transcription | `brew install whisper-cpp` |
 | [yt-dlp](https://github.com/yt-dlp/yt-dlp) | Yes | Video downloads from YouTube + others | `brew install yt-dlp` |
-| [TwitterAPI.io](https://twitterapi.io/) key | Yes | Powers all Twitter/X tools | [twitterapi.io](https://twitterapi.io/) |
+| [TwitterAPI.io](https://twitterapi.io/) key | Yes, unless using Xquik for read-only tools | Powers all Twitter/X tools | [twitterapi.io](https://twitterapi.io/) |
+| [Xquik](https://xquik.com/) key | Optional | Powers overlapping read-only Twitter/X tools | [xquik.com](https://xquik.com/) |
 | [Cobalt](https://github.com/imputnet/cobalt) instance | Optional | Instagram downloads | See [Cobalt setup](#cobalt-setup) |
 
 ## Configuration
@@ -132,6 +137,7 @@ Add to `~/.claude/settings.json`:
       "args": ["/absolute/path/to/media-mcp/dist/index.js"],
       "env": {
         "TWITTER_API_KEY": "your_key",
+        "TWITTER_BACKEND": "twitterapi",
         "WHISPER_MODEL_PATH": "/absolute/path/to/media-mcp/models/ggml-base.bin",
         "COBALT_API_URL": "http://localhost:9000",
         "COBALT_API_KEY": "your_cobalt_key",
@@ -151,7 +157,10 @@ Add to `~/Library/Application Support/Claude/claude_desktop_config.json` (macOS)
 
 | Variable | Required | Description |
 |---|---|---|
-| `TWITTER_API_KEY` | Yes | API key from [twitterapi.io](https://twitterapi.io/) |
+| `TWITTER_API_KEY` | Yes, unless `TWITTER_BACKEND=xquik` | API key from [twitterapi.io](https://twitterapi.io/) |
+| `TWITTER_BACKEND` | No | `twitterapi` by default. Use `xquik` for overlapping read tools. |
+| `XQUIK_API_KEY` | Required when `TWITTER_BACKEND=xquik` | API key from [Xquik](https://xquik.com/) |
+| `XQUIK_BASE_URL` | No | Xquik API base URL, defaults to `https://xquik.com/api/v1` |
 | `WHISPER_MODEL_PATH` | No | Path to Whisper model (defaults to `./models/ggml-base.bin`) |
 | `COBALT_API_URL` | No | URL of your Cobalt instance (required for Instagram) |
 | `COBALT_API_KEY` | No | Cobalt API key if auth is enabled |
@@ -161,6 +170,8 @@ Add to `~/Library/Application Support/Claude/claude_desktop_config.json` (macOS)
 ## Tools
 
 ### Twitter/X — 26 tools
+
+TwitterAPI.io remains the default backend for all Twitter/X tools. `TWITTER_BACKEND=xquik` supports the overlapping read tools for tweets, profiles, timelines, followers, following, mentions, search, retweeters, follow checks, and trends. Tools for Spaces, lists, communities, bookmarks, monitors, and filter rules still require `TWITTER_API_KEY`.
 
 #### Fetching tweets
 

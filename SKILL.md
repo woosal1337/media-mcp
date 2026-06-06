@@ -7,7 +7,7 @@ description: Social media at your fingertips. Fetch tweets, transcribe videos wi
 
 ## Principle
 
-1. **Fetch structured data, not raw HTML.** Every tool calls a purpose-built API (TwitterAPI.io, Cobalt, YouTube captions) and returns structured, LLM-ready text. No scraping, no DOM parsing, no fragile selectors.
+1. **Fetch structured data, not raw HTML.** Every tool calls a purpose-built API (TwitterAPI.io, optional Xquik for overlapping read tools, Cobalt, YouTube captions) and returns structured, LLM-ready text. No scraping, no DOM parsing, no fragile selectors.
 2. **Transcribe locally, always.** Audio never leaves the machine. Whisper runs on local hardware against a local model file. The only network calls are to download the media itself.
 3. **Captions first, Whisper second.** For YouTube, try platform captions (instant, free, accurate). Fall back to download + Whisper only when captions don't exist. Don't burn API time or compute when the platform already did the work.
 4. **Download then process.** Media is downloaded to a temp file, processed (transcribed, frame-extracted), and cleaned up. No streaming pipelines, no partial results. The user gets complete output or a clear error.
@@ -35,7 +35,7 @@ description: Social media at your fingertips. Fetch tweets, transcribe videos wi
               └────┬───────┘ └──┬────┘ └──┬────┘ └─────┬──────┘
                    │            │         │            │
           ┌────────▼──┐   ┌────▼───┐  ┌──▼─────┐  ┌───▼─────┐
-          │TwitterAPI  │   │yt-dlp  │  │ Cobalt │  │ yt-dlp  │
+          │Twitter API │   │yt-dlp  │  │ Cobalt │  │ yt-dlp  │
           │   .io      │   │caption │  │  API   │  │ direct  │
           │  (REST)    │   │  API   │  │(self-  │  │  fetch  │
           └────────────┘   └───┬────┘  │hosted) │  └────┬────┘
@@ -59,7 +59,7 @@ Each tool follows a specific pipeline. Understanding what happens at each step h
 ### Tweet Fetch Pipeline
 
 ```
-URL ──► TwitterAPI.io REST ──► parse tweet JSON ──► extract media URLs
+URL ──► TwitterAPI.io or Xquik REST ──► parse tweet JSON ──► extract media URLs
                                                          │
                                           ┌──────────────┤
                                           ▼              ▼
@@ -135,7 +135,7 @@ URL ──► detect source type
 
 ### Twitter/X — 26 tools
 
-All Twitter tools call the TwitterAPI.io REST API. Requires `TWITTER_API_KEY`.
+TwitterAPI.io remains the default backend for all Twitter tools and requires `TWITTER_API_KEY`. Set `TWITTER_BACKEND=xquik` with `XQUIK_API_KEY` to use Xquik for overlapping read tools. Spaces, lists, communities, bookmarks, monitors, and filter rules still require `TWITTER_API_KEY`.
 
 #### Fetching tweets
 
@@ -206,7 +206,8 @@ Requires self-hosted Cobalt instance (`COBALT_API_URL`).
 | ffmpeg | Audio extraction (transcription pipeline) and frame extraction | Yes |
 | whisper-cli | Local audio-to-text transcription | Yes |
 | yt-dlp | Video download from YouTube and other platforms | Yes |
-| TwitterAPI.io key | Powers all 26 Twitter/X tools | Yes |
+| TwitterAPI.io key | Powers all 26 Twitter/X tools | Yes, unless only using Xquik-supported read tools |
+| Xquik API key | Powers overlapping read-only Twitter/X tools | Optional |
 | Cobalt instance | Instagram media downloads | Only for Instagram |
 
 ## How Transcription Works

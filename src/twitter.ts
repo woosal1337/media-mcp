@@ -40,6 +40,52 @@ const FILTER_LIST_ENDPOINT = `${TWITTER_API_BASE}/oapi/tweet_filter/get_rules`;
 const FILTER_UPDATE_ENDPOINT = `${TWITTER_API_BASE}/oapi/tweet_filter/update_rule`;
 const FILTER_DELETE_ENDPOINT = `${TWITTER_API_BASE}/oapi/tweet_filter/delete_rule`;
 const BOOKMARKS_ENDPOINT = `${TWITTER_API_BASE}/twitter/bookmarks_v2`;
+const XQUIK_API_BASE = (process.env.XQUIK_BASE_URL ?? "https://xquik.com/api/v1").replace(/\/+$/, "");
+
+function twitterBackend(): "twitterapi" | "xquik" {
+  const configured = process.env.TWITTER_BACKEND?.toLowerCase();
+  if (configured === "xquik") return "xquik";
+  if (!process.env.TWITTER_API_KEY && process.env.XQUIK_API_KEY) return "xquik";
+  return "twitterapi";
+}
+
+function usingXquik(): boolean {
+  return twitterBackend() === "xquik";
+}
+
+function xquikApiKey(fallback: string): string {
+  return process.env.XQUIK_API_KEY ?? fallback;
+}
+
+function requireTwitterApi(apiKey: string): string {
+  if (!usingXquik()) return apiKey;
+  if (process.env.TWITTER_API_KEY) return process.env.TWITTER_API_KEY;
+  throw new Error("This tool requires TWITTER_API_KEY. Xquik supports the overlapping read, search, profile, follow, and trends tools.");
+}
+
+function xquikUrl(path: string, params: Record<string, string | number | boolean | undefined> = {}): string {
+  const url = new URL(`${XQUIK_API_BASE}/${path.replace(/^\/+/, "")}`);
+  for (const [key, value] of Object.entries(params)) {
+    if (value !== undefined && value !== "") {
+      url.searchParams.set(key, String(value));
+    }
+  }
+  return url.toString();
+}
+
+async function fetchXquikJson<T>(
+  path: string,
+  apiKey: string,
+  params?: Record<string, string | number | boolean | undefined>
+): Promise<T> {
+  const response = await fetch(xquikUrl(path, params), {
+    headers: { "x-api-key": xquikApiKey(apiKey) },
+  });
+  if (!response.ok) {
+    throw new Error(`Xquik API error: ${response.status} ${await response.text()}`);
+  }
+  return await response.json() as T;
+}
 
 interface TweetMediaVariant {
   bitrate?: number;
@@ -83,6 +129,53 @@ interface Tweet {
   entities?: TweetEntities;
   quoted_tweet?: Tweet | null;
   isQuote: boolean;
+}
+
+interface XquikUser {
+  id?: string;
+  username?: string;
+  userName?: string;
+  screen_name?: string;
+  name?: string;
+  description?: string;
+  followers?: number;
+  followers_count?: number;
+  following?: number;
+  friends_count?: number;
+  statusesCount?: number;
+  statuses_count?: number;
+  listedCount?: number;
+  listed_count?: number;
+  createdAt?: string;
+  created_at?: string;
+  verified?: boolean;
+  isBlueVerified?: boolean;
+  profilePicture?: string;
+  profile_image_url_https?: string;
+  coverPicture?: string;
+  profile_banner_url?: string;
+  location?: string;
+  website?: string;
+  url?: string;
+}
+
+interface XquikTweet {
+  id?: string;
+  url?: string;
+  text?: string;
+  createdAt?: string;
+  likeCount?: number;
+  retweetCount?: number;
+  replyCount?: number;
+  quoteCount?: number;
+  viewCount?: number;
+  bookmarkCount?: number;
+  lang?: string;
+  author?: XquikUser;
+  media?: Array<{ type?: string; mediaUrl?: string; url?: string }>;
+  entities?: TweetEntities;
+  quoted_tweet?: XquikTweet | Tweet | null;
+  isQuoteStatus?: boolean;
 }
 
 export interface ProcessedTweet {
@@ -323,10 +416,67 @@ export interface UserProfile {
   website: string;
 }
 
+function userProfileFromApi(u: XquikUser, username = ""): UserProfile {
+  return {
+    id: u.id ?? "",
+    username: u.username ?? u.userName ?? u.screen_name ?? username,
+    name: u.name ?? "",
+    description: u.description ?? "",
+    followers: u.followers ?? u.followers_count ?? 0,
+    following: u.following ?? u.friends_count ?? 0,
+    tweets: u.statusesCount ?? u.statuses_count ?? 0,
+    listed: u.listedCount ?? u.listed_count ?? 0,
+    createdAt: u.createdAt ?? u.created_at ?? "",
+    verified: u.verified ?? u.isBlueVerified ?? false,
+    profilePicture: u.profilePicture ?? u.profile_image_url_https ?? "",
+    bannerUrl: u.coverPicture ?? u.profile_banner_url ?? "",
+    location: u.location ?? "",
+    website: u.website ?? u.url ?? "",
+  };
+}
+
+function tweetFromXquik(tweet: XquikTweet, author?: XquikUser): Tweet {
+  const tweetAuthor = tweet.author ?? author ?? {};
+  return {
+    id: tweet.id ?? "",
+    url: tweet.url ?? (tweet.id ? `https://x.com/i/status/${tweet.id}` : ""),
+    text: tweet.text ?? "",
+    createdAt: tweet.createdAt ?? "",
+    likeCount: tweet.likeCount ?? 0,
+    retweetCount: tweet.retweetCount ?? 0,
+    replyCount: tweet.replyCount ?? 0,
+    viewCount: tweet.viewCount ?? 0,
+    bookmarkCount: tweet.bookmarkCount ?? 0,
+    lang: tweet.lang ?? "",
+    author: {
+      userName: tweetAuthor.username ?? tweetAuthor.userName ?? tweetAuthor.screen_name ?? "",
+      name: tweetAuthor.name ?? "",
+      profilePicture: tweetAuthor.profilePicture ?? tweetAuthor.profile_image_url_https ?? "",
+      followers: tweetAuthor.followers ?? tweetAuthor.followers_count ?? 0,
+    },
+    extendedEntities: tweet.media?.length
+      ? {
+        media: tweet.media.map((m) => ({
+          type: m.type === "video" ? "video" : "photo",
+          media_url_https: m.mediaUrl ?? m.url ?? "",
+        })),
+      }
+      : undefined,
+    entities: tweet.entities,
+    quoted_tweet: tweet.quoted_tweet ? tweetFromXquik(tweet.quoted_tweet as XquikTweet) : null,
+    isQuote: tweet.isQuoteStatus ?? Boolean(tweet.quoted_tweet),
+  };
+}
+
 export async function fetchUserProfile(
   username: string,
   apiKey: string
 ): Promise<UserProfile> {
+  if (usingXquik()) {
+    const data = await fetchXquikJson<XquikUser>(`/x/users/${encodeURIComponent(username)}`, apiKey);
+    return userProfileFromApi(data, username);
+  }
+
   const response = await fetch(`${USER_INFO_ENDPOINT}?userName=${encodeURIComponent(username)}`, {
     headers: { "x-api-key": apiKey },
   });
@@ -339,22 +489,7 @@ export async function fetchUserProfile(
   const u = data.data;
   if (!u) throw new Error(`User not found: ${username}`);
 
-  return {
-    id: u.id ?? u.rest_id ?? "",
-    username: u.userName ?? u.screen_name ?? username,
-    name: u.name ?? "",
-    description: u.description ?? "",
-    followers: u.followers ?? u.followers_count ?? 0,
-    following: u.following ?? u.friends_count ?? 0,
-    tweets: u.statuses_count ?? u.statusesCount ?? 0,
-    listed: u.listed_count ?? u.listedCount ?? 0,
-    createdAt: u.createdAt ?? u.created_at ?? "",
-    verified: u.isBlueVerified ?? u.verified ?? false,
-    profilePicture: u.profilePicture ?? u.profile_image_url_https ?? "",
-    bannerUrl: u.profile_banner_url ?? u.profileBannerUrl ?? "",
-    location: u.location ?? "",
-    website: u.website ?? u.url ?? "",
-  };
+  return userProfileFromApi(u, username);
 }
 
 
@@ -363,6 +498,18 @@ export async function fetchUserTweets(
   apiKey: string,
   cursor?: string
 ): Promise<{ tweets: ProcessedTweet[]; nextCursor: string | null }> {
+  if (usingXquik()) {
+    const data = await fetchXquikJson<{
+      tweets?: XquikTweet[];
+      has_next_page?: boolean;
+      next_cursor?: string;
+    }>(`/x/users/${encodeURIComponent(username)}/tweets`, apiKey, { cursor });
+    return {
+      tweets: (data.tweets ?? []).map((tweet) => processTweet(tweetFromXquik(tweet))),
+      nextCursor: data.has_next_page ? (data.next_cursor ?? null) : null,
+    };
+  }
+
   let url = `${USER_TWEETS_ENDPOINT}?userName=${encodeURIComponent(username)}`;
   if (cursor) url += `&cursor=${encodeURIComponent(cursor)}`;
 
@@ -387,6 +534,18 @@ export async function fetchUserFollowers(
   apiKey: string,
   cursor?: string
 ): Promise<{ users: UserProfile[]; nextCursor: string | null }> {
+  if (usingXquik()) {
+    const data = await fetchXquikJson<{
+      users?: XquikUser[];
+      has_next_page?: boolean;
+      next_cursor?: string;
+    }>(`/x/users/${encodeURIComponent(username)}/followers`, apiKey, { cursor });
+    return {
+      users: (data.users ?? []).map((user) => userProfileFromApi(user)),
+      nextCursor: data.has_next_page ? (data.next_cursor ?? null) : null,
+    };
+  }
+
   let url = `${USER_FOLLOWERS_ENDPOINT}?userName=${encodeURIComponent(username)}`;
   if (cursor) url += `&cursor=${encodeURIComponent(cursor)}`;
 
@@ -399,22 +558,7 @@ export async function fetchUserFollowers(
   }
 
   const data = await response.json() as { followers?: any[]; has_next_page?: boolean; next_cursor?: string };
-  const users: UserProfile[] = (data.followers ?? []).map((u: any) => ({
-    id: u.id ?? u.rest_id ?? "",
-    username: u.userName ?? u.screen_name ?? "",
-    name: u.name ?? "",
-    description: u.description ?? "",
-    followers: u.followers ?? u.followers_count ?? 0,
-    following: u.following ?? u.friends_count ?? 0,
-    tweets: u.statuses_count ?? 0,
-    listed: u.listed_count ?? 0,
-    createdAt: u.createdAt ?? "",
-    verified: u.isBlueVerified ?? false,
-    profilePicture: u.profilePicture ?? "",
-    bannerUrl: u.profile_banner_url ?? "",
-    location: u.location ?? "",
-    website: u.website ?? u.url ?? "",
-  }));
+  const users: UserProfile[] = (data.followers ?? []).map((u: any) => userProfileFromApi(u));
 
   return { users, nextCursor: data.has_next_page ? (data.next_cursor ?? null) : null };
 }
@@ -424,6 +568,18 @@ export async function fetchUserFollowing(
   apiKey: string,
   cursor?: string
 ): Promise<{ users: UserProfile[]; nextCursor: string | null }> {
+  if (usingXquik()) {
+    const data = await fetchXquikJson<{
+      users?: XquikUser[];
+      has_next_page?: boolean;
+      next_cursor?: string;
+    }>(`/x/users/${encodeURIComponent(username)}/following`, apiKey, { cursor });
+    return {
+      users: (data.users ?? []).map((user) => userProfileFromApi(user)),
+      nextCursor: data.has_next_page ? (data.next_cursor ?? null) : null,
+    };
+  }
+
   let url = `${USER_FOLLOWING_ENDPOINT}?userName=${encodeURIComponent(username)}`;
   if (cursor) url += `&cursor=${encodeURIComponent(cursor)}`;
 
@@ -436,22 +592,7 @@ export async function fetchUserFollowing(
   }
 
   const data = await response.json() as { followings?: any[]; has_next_page?: boolean; next_cursor?: string };
-  const users: UserProfile[] = (data.followings ?? []).map((u: any) => ({
-    id: u.id ?? u.rest_id ?? "",
-    username: u.userName ?? u.screen_name ?? "",
-    name: u.name ?? "",
-    description: u.description ?? "",
-    followers: u.followers ?? u.followers_count ?? 0,
-    following: u.following ?? u.friends_count ?? 0,
-    tweets: u.statuses_count ?? 0,
-    listed: u.listed_count ?? 0,
-    createdAt: u.createdAt ?? "",
-    verified: u.isBlueVerified ?? false,
-    profilePicture: u.profilePicture ?? "",
-    bannerUrl: u.profile_banner_url ?? "",
-    location: u.location ?? "",
-    website: u.website ?? u.url ?? "",
-  }));
+  const users: UserProfile[] = (data.followings ?? []).map((u: any) => userProfileFromApi(u));
 
   return { users, nextCursor: data.has_next_page ? (data.next_cursor ?? null) : null };
 }
@@ -462,6 +603,18 @@ export async function fetchTweetReplies(
   apiKey: string,
   cursor?: string
 ): Promise<{ tweets: ProcessedTweet[]; nextCursor: string | null }> {
+  if (usingXquik()) {
+    const data = await fetchXquikJson<{
+      tweets?: XquikTweet[];
+      has_next_page?: boolean;
+      next_cursor?: string;
+    }>(`/x/tweets/${encodeURIComponent(tweetId)}/replies`, apiKey, { cursor });
+    return {
+      tweets: (data.tweets ?? []).map((tweet) => processTweet(tweetFromXquik(tweet))),
+      nextCursor: data.has_next_page ? (data.next_cursor ?? null) : null,
+    };
+  }
+
   let url = `${TWEET_REPLIES_ENDPOINT}?tweetId=${tweetId}`;
   if (cursor) url += `&cursor=${encodeURIComponent(cursor)}`;
 
@@ -480,6 +633,18 @@ export async function fetchTweetQuotes(
   apiKey: string,
   cursor?: string
 ): Promise<{ tweets: ProcessedTweet[]; nextCursor: string | null }> {
+  if (usingXquik()) {
+    const data = await fetchXquikJson<{
+      tweets?: XquikTweet[];
+      has_next_page?: boolean;
+      next_cursor?: string;
+    }>(`/x/tweets/${encodeURIComponent(tweetId)}/quotes`, apiKey, { cursor });
+    return {
+      tweets: (data.tweets ?? []).map((tweet) => processTweet(tweetFromXquik(tweet))),
+      nextCursor: data.has_next_page ? (data.next_cursor ?? null) : null,
+    };
+  }
+
   let url = `${TWEET_QUOTES_ENDPOINT}?tweetId=${tweetId}`;
   if (cursor) url += `&cursor=${encodeURIComponent(cursor)}`;
 
@@ -498,6 +663,18 @@ export async function fetchTweetRetweeters(
   apiKey: string,
   cursor?: string
 ): Promise<{ users: UserProfile[]; nextCursor: string | null }> {
+  if (usingXquik()) {
+    const data = await fetchXquikJson<{
+      users?: XquikUser[];
+      has_next_page?: boolean;
+      next_cursor?: string;
+    }>(`/x/tweets/${encodeURIComponent(tweetId)}/retweeters`, apiKey, { cursor });
+    return {
+      users: (data.users ?? []).map((user) => userProfileFromApi(user)),
+      nextCursor: data.has_next_page ? (data.next_cursor ?? null) : null,
+    };
+  }
+
   let url = `${TWEET_RETWEETERS_ENDPOINT}?tweetId=${tweetId}`;
   if (cursor) url += `&cursor=${encodeURIComponent(cursor)}`;
 
@@ -505,22 +682,7 @@ export async function fetchTweetRetweeters(
   if (!response.ok) throw new Error(`Twitter API error: ${response.status} ${await response.text()}`);
 
   const data = await response.json() as { users?: any[]; has_next_page?: boolean; next_cursor?: string };
-  const users: UserProfile[] = (data.users ?? []).map((u: any) => ({
-    id: u.id ?? u.rest_id ?? "",
-    username: u.userName ?? u.screen_name ?? "",
-    name: u.name ?? "",
-    description: u.description ?? "",
-    followers: u.followers ?? u.followers_count ?? 0,
-    following: u.following ?? u.friends_count ?? 0,
-    tweets: u.statuses_count ?? 0,
-    listed: u.listed_count ?? 0,
-    createdAt: u.createdAt ?? "",
-    verified: u.isBlueVerified ?? false,
-    profilePicture: u.profilePicture ?? "",
-    bannerUrl: u.profile_banner_url ?? "",
-    location: u.location ?? "",
-    website: u.website ?? u.url ?? "",
-  }));
+  const users: UserProfile[] = (data.users ?? []).map((u: any) => userProfileFromApi(u));
 
   return { users, nextCursor: data.has_next_page ? (data.next_cursor ?? null) : null };
 }
@@ -531,6 +693,18 @@ export async function searchTweets(
   apiKey: string,
   cursor?: string
 ): Promise<{ tweets: ProcessedTweet[]; nextCursor: string | null }> {
+  if (usingXquik()) {
+    const data = await fetchXquikJson<{
+      tweets?: XquikTweet[];
+      has_next_page?: boolean;
+      next_cursor?: string;
+    }>("/x/tweets/search", apiKey, { q: query, cursor });
+    return {
+      tweets: (data.tweets ?? []).map((tweet) => processTweet(tweetFromXquik(tweet))),
+      nextCursor: data.has_next_page ? (data.next_cursor ?? null) : null,
+    };
+  }
+
   let url = `${SEARCH_ENDPOINT}?query=${encodeURIComponent(query)}`;
   if (cursor) url += `&cursor=${encodeURIComponent(cursor)}`;
 
@@ -549,6 +723,16 @@ export async function fetchTrends(
   apiKey: string,
   woeid: number = 1
 ): Promise<Array<{ name: string; tweetVolume: number | null }>> {
+  if (usingXquik()) {
+    const data = await fetchXquikJson<{
+      trends?: Array<{ name?: string; tweetVolume?: number; tweet_volume?: number }>;
+    }>("/trends", apiKey, { woeid });
+    return (data.trends ?? []).map((trend) => ({
+      name: trend.name ?? "",
+      tweetVolume: trend.tweetVolume ?? trend.tweet_volume ?? null,
+    }));
+  }
+
   const response = await fetch(`${TRENDS_ENDPOINT}?woeid=${woeid}`, {
     headers: { "x-api-key": apiKey },
   });
@@ -566,6 +750,8 @@ export async function fetchUserAbout(
   username: string,
   apiKey: string
 ): Promise<any> {
+  if (usingXquik()) return await fetchUserProfile(username, apiKey);
+
   const response = await fetch(`${USER_ABOUT_ENDPOINT}?userName=${encodeURIComponent(username)}`, {
     headers: { "x-api-key": apiKey },
   });
@@ -579,6 +765,18 @@ export async function fetchUserMentions(
   apiKey: string,
   cursor?: string
 ): Promise<{ tweets: ProcessedTweet[]; nextCursor: string | null }> {
+  if (usingXquik()) {
+    const data = await fetchXquikJson<{
+      tweets?: XquikTweet[];
+      has_next_page?: boolean;
+      next_cursor?: string;
+    }>(`/x/users/${encodeURIComponent(username)}/mentions`, apiKey, { cursor });
+    return {
+      tweets: (data.tweets ?? []).map((tweet) => processTweet(tweetFromXquik(tweet))),
+      nextCursor: data.has_next_page ? (data.next_cursor ?? null) : null,
+    };
+  }
+
   let url = `${USER_MENTIONS_ENDPOINT}?userName=${encodeURIComponent(username)}`;
   if (cursor) url += `&cursor=${encodeURIComponent(cursor)}`;
   const response = await fetch(url, { headers: { "x-api-key": apiKey } });
@@ -595,27 +793,17 @@ export async function searchUsers(
   query: string,
   apiKey: string
 ): Promise<UserProfile[]> {
+  if (usingXquik()) {
+    const data = await fetchXquikJson<{ users?: XquikUser[] }>("/x/users/search", apiKey, { q: query });
+    return (data.users ?? []).map((user) => userProfileFromApi(user));
+  }
+
   const response = await fetch(`${USER_SEARCH_ENDPOINT}?query=${encodeURIComponent(query)}`, {
     headers: { "x-api-key": apiKey },
   });
   if (!response.ok) throw new Error(`Twitter API error: ${response.status} ${await response.text()}`);
   const data = await response.json() as { users?: any[] };
-  return (data.users ?? []).map((u: any) => ({
-    id: u.id ?? u.rest_id ?? "",
-    username: u.userName ?? u.screen_name ?? "",
-    name: u.name ?? "",
-    description: u.description ?? "",
-    followers: u.followers ?? u.followers_count ?? 0,
-    following: u.following ?? u.friends_count ?? 0,
-    tweets: u.statuses_count ?? 0,
-    listed: u.listed_count ?? 0,
-    createdAt: u.createdAt ?? "",
-    verified: u.isBlueVerified ?? false,
-    profilePicture: u.profilePicture ?? "",
-    bannerUrl: u.profile_banner_url ?? "",
-    location: u.location ?? "",
-    website: u.website ?? u.url ?? "",
-  }));
+  return (data.users ?? []).map((u: any) => userProfileFromApi(u));
 }
 
 
@@ -624,27 +812,24 @@ export async function fetchVerifiedFollowers(
   apiKey: string,
   cursor?: string
 ): Promise<{ users: UserProfile[]; nextCursor: string | null }> {
+  if (usingXquik()) {
+    const data = await fetchXquikJson<{
+      users?: XquikUser[];
+      has_next_page?: boolean;
+      next_cursor?: string;
+    }>(`/x/users/${encodeURIComponent(username)}/verified-followers`, apiKey, { cursor });
+    return {
+      users: (data.users ?? []).map((user) => ({ ...userProfileFromApi(user), verified: true })),
+      nextCursor: data.has_next_page ? (data.next_cursor ?? null) : null,
+    };
+  }
+
   let url = `${VERIFIED_FOLLOWERS_ENDPOINT}?userName=${encodeURIComponent(username)}`;
   if (cursor) url += `&cursor=${encodeURIComponent(cursor)}`;
   const response = await fetch(url, { headers: { "x-api-key": apiKey } });
   if (!response.ok) throw new Error(`Twitter API error: ${response.status} ${await response.text()}`);
   const data = await response.json() as { followers?: any[]; has_next_page?: boolean; next_cursor?: string };
-  const users: UserProfile[] = (data.followers ?? []).map((u: any) => ({
-    id: u.id ?? u.rest_id ?? "",
-    username: u.userName ?? u.screen_name ?? "",
-    name: u.name ?? "",
-    description: u.description ?? "",
-    followers: u.followers ?? u.followers_count ?? 0,
-    following: u.following ?? u.friends_count ?? 0,
-    tweets: u.statuses_count ?? 0,
-    listed: u.listed_count ?? 0,
-    createdAt: u.createdAt ?? "",
-    verified: true,
-    profilePicture: u.profilePicture ?? "",
-    bannerUrl: u.profile_banner_url ?? "",
-    location: u.location ?? "",
-    website: u.website ?? u.url ?? "",
-  }));
+  const users: UserProfile[] = (data.followers ?? []).map((u: any) => ({ ...userProfileFromApi(u), verified: true }));
   return { users, nextCursor: data.has_next_page ? (data.next_cursor ?? null) : null };
 }
 
@@ -654,6 +839,17 @@ export async function checkFollowRelationship(
   targetUsername: string,
   apiKey: string
 ): Promise<{ sourceFollowsTarget: boolean; targetFollowsSource: boolean }> {
+  if (usingXquik()) {
+    const data = await fetchXquikJson<{
+      isFollowing?: boolean;
+      isFollowedBy?: boolean;
+    }>("/x/followers/check", apiKey, { source: sourceUsername, target: targetUsername });
+    return {
+      sourceFollowsTarget: data.isFollowing ?? false,
+      targetFollowsSource: data.isFollowedBy ?? false,
+    };
+  }
+
   const response = await fetch(
     `${CHECK_FOLLOW_ENDPOINT}?source_user_name=${encodeURIComponent(sourceUsername)}&target_user_name=${encodeURIComponent(targetUsername)}`,
     { headers: { "x-api-key": apiKey } }
@@ -673,6 +869,7 @@ export async function fetchTweetRepliesV2(
   sortBy: "Relevance" | "Latest" | "Likes" = "Relevance",
   cursor?: string
 ): Promise<{ tweets: ProcessedTweet[]; nextCursor: string | null }> {
+  apiKey = requireTwitterApi(apiKey);
   let url = `${TWEET_REPLIES_V2_ENDPOINT}?tweetId=${tweetId}&sortBy=${sortBy}`;
   if (cursor) url += `&cursor=${encodeURIComponent(cursor)}`;
   const response = await fetch(url, { headers: { "x-api-key": apiKey } });
@@ -690,6 +887,7 @@ export async function fetchListTimeline(
   apiKey: string,
   cursor?: string
 ): Promise<{ tweets: ProcessedTweet[]; nextCursor: string | null }> {
+  apiKey = requireTwitterApi(apiKey);
   let url = `${LIST_TIMELINE_ENDPOINT}?listId=${listId}`;
   if (cursor) url += `&cursor=${encodeURIComponent(cursor)}`;
   const response = await fetch(url, { headers: { "x-api-key": apiKey } });
@@ -707,6 +905,7 @@ export async function fetchCommunityTweets(
   apiKey: string,
   cursor?: string
 ): Promise<{ tweets: ProcessedTweet[]; nextCursor: string | null }> {
+  apiKey = requireTwitterApi(apiKey);
   let url = `${COMMUNITY_TWEETS_ENDPOINT}?communityId=${communityId}`;
   if (cursor) url += `&cursor=${encodeURIComponent(cursor)}`;
   const response = await fetch(url, { headers: { "x-api-key": apiKey } });
@@ -723,6 +922,7 @@ export async function fetchSpaceDetail(
   spaceId: string,
   apiKey: string
 ): Promise<any> {
+  apiKey = requireTwitterApi(apiKey);
   const response = await fetch(`${SPACE_DETAIL_ENDPOINT}?spaceId=${spaceId}`, {
     headers: { "x-api-key": apiKey },
   });
@@ -736,6 +936,7 @@ export async function fetchBookmarks(
   apiKey: string,
   cursor?: string
 ): Promise<{ tweets: ProcessedTweet[]; nextCursor: string | null }> {
+  apiKey = requireTwitterApi(apiKey);
   const body: any = { login_cookie: loginCookie };
   if (cursor) body.cursor = cursor;
   const response = await fetch(BOOKMARKS_ENDPOINT, {
@@ -756,6 +957,7 @@ export async function addUserToMonitor(
   username: string,
   apiKey: string
 ): Promise<any> {
+  apiKey = requireTwitterApi(apiKey);
   const response = await fetch(MONITOR_ADD_ENDPOINT, {
     method: "POST",
     headers: { "x-api-key": apiKey, "Content-Type": "application/json" },
@@ -766,6 +968,7 @@ export async function addUserToMonitor(
 }
 
 export async function getMonitoredUsers(apiKey: string): Promise<any> {
+  apiKey = requireTwitterApi(apiKey);
   const response = await fetch(MONITOR_LIST_ENDPOINT, { headers: { "x-api-key": apiKey } });
   if (!response.ok) throw new Error(`Twitter API error: ${response.status} ${await response.text()}`);
   return await response.json();
@@ -775,6 +978,7 @@ export async function removeUserFromMonitor(
   username: string,
   apiKey: string
 ): Promise<any> {
+  apiKey = requireTwitterApi(apiKey);
   const response = await fetch(MONITOR_REMOVE_ENDPOINT, {
     method: "POST",
     headers: { "x-api-key": apiKey, "Content-Type": "application/json" },
@@ -790,6 +994,7 @@ export async function addFilterRule(
   value: string,
   apiKey: string
 ): Promise<any> {
+  apiKey = requireTwitterApi(apiKey);
   const response = await fetch(FILTER_ADD_ENDPOINT, {
     method: "POST",
     headers: { "x-api-key": apiKey, "Content-Type": "application/json" },
@@ -800,6 +1005,7 @@ export async function addFilterRule(
 }
 
 export async function getFilterRules(apiKey: string): Promise<any> {
+  apiKey = requireTwitterApi(apiKey);
   const response = await fetch(FILTER_LIST_ENDPOINT, { headers: { "x-api-key": apiKey } });
   if (!response.ok) throw new Error(`Twitter API error: ${response.status} ${await response.text()}`);
   return await response.json();
@@ -809,6 +1015,7 @@ export async function deleteFilterRule(
   ruleId: string,
   apiKey: string
 ): Promise<any> {
+  apiKey = requireTwitterApi(apiKey);
   const response = await fetch(FILTER_DELETE_ENDPOINT, {
     method: "DELETE",
     headers: { "x-api-key": apiKey, "Content-Type": "application/json" },
@@ -824,6 +1031,17 @@ export async function fetchTweet(
   apiKey: string
 ): Promise<ProcessedTweet> {
   const tweetId = extractTweetId(tweetUrl);
+  if (usingXquik()) {
+    const data = await fetchXquikJson<{ tweet?: XquikTweet; author?: XquikUser }>(
+      `/x/tweets/${encodeURIComponent(tweetId)}`,
+      apiKey
+    );
+    if (!data.tweet) {
+      throw new Error(`No tweet found for ID: ${tweetId}`);
+    }
+    return processTweet(tweetFromXquik(data.tweet, data.author));
+  }
+
   const response = await fetch(`${TWEETS_ENDPOINT}?tweet_ids=${tweetId}`, {
     headers: { "x-api-key": apiKey },
   });
