@@ -154,12 +154,13 @@ function cleanup(...paths: string[]) {
 
 async function transcribeVideo(
   videoPath: string,
-  modelPath: string
+  modelPath: string,
+  language?: string
 ): Promise<string> {
   let audioPath = "";
   try {
     audioPath = await extractAudio(videoPath);
-    const result = await transcribe(audioPath, modelPath);
+    const result = await transcribe(audioPath, modelPath, { language });
     return renderTranscript(result);
   } finally {
     cleanup(audioPath);
@@ -169,7 +170,8 @@ async function transcribeVideo(
 export async function fetchInstagramPost(
   input: string,
   modelPath?: string,
-  transcribe: boolean = true
+  transcribe: boolean = true,
+  language?: string
 ): Promise<InstagramPost> {
   if (!COBALT_API_URL) {
     throw new Error("COBALT_API_URL environment variable is required for Instagram support");
@@ -235,7 +237,7 @@ export async function fetchInstagramPost(
       const transcriptions: string[] = [];
       for (const video of videoItems) {
         try {
-          const text = await transcribeVideo(video.localPath!, modelPath);
+          const text = await transcribeVideo(video.localPath!, modelPath, language);
           transcriptions.push(text);
         } catch (err: unknown) {
           const message = err instanceof Error ? err.message : String(err);

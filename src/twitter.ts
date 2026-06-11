@@ -228,15 +228,17 @@ function cleanup(...paths: string[]) {
 
 export async function transcribeVideo(
   videoUrl: string,
-  modelPath: string
+  modelPath: string,
+  language?: string
 ): Promise<string> {
-  const result = await transcribeVideoStructured(videoUrl, modelPath);
+  const result = await transcribeVideoStructured(videoUrl, modelPath, language);
   return renderTranscript(result);
 }
 
 export async function transcribeVideoStructured(
   videoUrl: string,
-  modelPath: string
+  modelPath: string,
+  language?: string
 ): Promise<TranscriptResult> {
   let videoPath = getCachedVideoPath(videoUrl);
   let downloadedFresh = false;
@@ -248,7 +250,7 @@ export async function transcribeVideoStructured(
       cacheVideo(videoUrl, videoPath);
     }
     audioPath = await extractAudio(videoPath);
-    return await transcribe(audioPath, modelPath);
+    return await transcribe(audioPath, modelPath, { language });
   } finally {
     if (downloadedFresh && videoPath) cleanup(videoPath);
     if (audioPath) cleanup(audioPath);
