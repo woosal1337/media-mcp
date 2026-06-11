@@ -1,0 +1,14 @@
+node_modules
+dist
+models
+assets
+test
+.git
+.github
+.env
+.env.example
+.DS_Store
+.trellis
+.claude
+*.md
+pnpm-lock.yaml

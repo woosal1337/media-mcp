@@ -1,10 +1,12 @@
 {
   "name": "media-mcp",
-  "version": "1.1.0",
+  "version": "1.2.0",
   "description": "MCP server for social media — fetch tweets, transcribe videos, extract frames, and download Instagram posts",
   "type": "module",
   "main": "dist/index.js",
-  "bin": "dist/index.js",
+  "bin": {
+    "media-mcp": "dist/index.js"
+  },
   "license": "MIT",
   "author": "Ege Celebi <ege@woosal.com>",
   "repository": {
@@ -31,6 +33,7 @@
   "scripts": {
     "build": "tsc",
     "prepare": "tsc",
+    "prepublishOnly": "npm run build && npm test",
     "start": "node dist/index.js",
     "dev": "tsc --watch",
     "test": "vitest run",
