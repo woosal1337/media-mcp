@@ -8,3 +8,4 @@ models/
 .DS_Store
 .trellis/
 .claude/
+pnpm-lock.yaml

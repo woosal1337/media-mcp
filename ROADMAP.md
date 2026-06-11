@@ -26,7 +26,17 @@ The LLM needs a way to know *when* its ears are insufficient. v1.1 gives it two 
 
 Result: an agent that has ears on every video, eyes only where ears fail. Minimum frames, maximum accuracy.
 
-## v1.2 — TikTok Support
+## v1.2 — Hardening (shipped 2026-06-11)
+
+The professional baseline before platform expansion.
+
+- Vitest unit suite over the confidence pipeline, URL parsing, retry logic, and model resolution; CI on Node 20/22
+- Shared HTTP retry layer: exponential backoff + jitter, Retry-After on 429, per-call timeouts on every external call
+- `language` parameter (ISO 639-1 or `auto`) on all transcription tools — captions requested in-language on YouTube before Whisper fallback
+- `model` parameter (`tiny` → `large-v3-turbo`) with managed HuggingFace downloads into `~/.media-mcp/models`
+- `npx media-mcp` via npm publish with provenance, tag-triggered releases, GHCR Docker image bundling ffmpeg + yt-dlp + whisper-cli
+
+## v1.3 — TikTok Support
 
 Cobalt already handles TikTok with watermark removal, slideshow images, and original audio.
 
@@ -35,14 +45,14 @@ Cobalt already handles TikTok with watermark removal, slideshow images, and orig
 - Automatic watermark-free downloads via Cobalt
 - Whisper transcription for video audio
 
-## v1.3 — Reddit and Bluesky
+## v1.4 — Reddit and Bluesky
 
 Both supported by Cobalt out of the box.
 
 - `get_reddit_post` — Download Reddit video/GIF by URL with transcription
 - `get_bluesky_post` — Fetch Bluesky post with media download and transcription
 
-## v1.4 — Facebook, Pinterest, Snapchat
+## v1.5 — Facebook, Pinterest, Snapchat
 
 Cobalt covers all three.
 
@@ -50,7 +60,7 @@ Cobalt covers all three.
 - `get_pinterest_media` — Download pins (photos, GIFs, videos, stories)
 - `get_snapchat_spotlight` — Download Snapchat spotlights and stories
 
-## v1.5 — Unified Media Pipeline
+## v1.6 — Unified Media Pipeline
 
 Replace per-platform download logic with a single Cobalt-backed pipeline.
 
@@ -86,7 +96,7 @@ Replace per-platform download logic with a single Cobalt-backed pipeline.
 | OK.ru | Video |
 | VK | Video, clips |
 
-## v1.6 — Web Scraping via Firecrawl
+## v1.7 — Web Scraping via Firecrawl
 
 Extend media-mcp beyond social media into any website. Self-hosted Firecrawl replaces Claude's limited built-in WebFetch with a proper web scraping engine.
 
@@ -100,7 +110,7 @@ Firecrawl is open source (AGPL-3.0), self-hosted via Docker on the same server a
 
 Why this matters: social media tools fetch structured platform data, but research, competitive analysis, and documentation ingestion require general web access. Firecrawl gives AI agents the same quality of web data as a human with a browser.
 
-## v1.7 — Streaming and Live Content
+## v1.8 — Streaming and Live Content
 
 - Twitter Spaces audio recording + transcription
 - Twitch clip transcription

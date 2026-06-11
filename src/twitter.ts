@@ -7,6 +7,7 @@ import { join } from "node:path";
 import { randomUUID } from "node:crypto";
 import { transcribe, renderTranscript, type TranscriptResult } from "./transcribe.js";
 import { cacheVideo, getCachedVideoPath } from "./video-cache.js";
+import { fetchWithRetry } from "./http.js";
 
 const TWITTER_API_BASE = "https://api.twitterapi.io";
 const TWEETS_ENDPOINT = `${TWITTER_API_BASE}/twitter/tweets`;
@@ -212,7 +213,7 @@ export interface ProcessedMedia {
   videoUrl?: string;
 }
 
-function extractTweetId(input: string): string {
+export function extractTweetId(input: string): string {
   const match = input.match(/(?:twitter\.com|x\.com)\/\w+\/status\/(\d+)/);
   if (match) return match[1];
   if (/^\d+$/.test(input)) return input;
@@ -280,7 +281,7 @@ function processTweet(tweet: Tweet): ProcessedTweet {
 
 async function downloadVideo(videoUrl: string): Promise<string> {
   const filePath = join(tmpdir(), `media-mcp-${randomUUID()}.mp4`);
-  const response = await fetch(videoUrl);
+  const response = await fetchWithRetry(videoUrl, undefined, { timeoutMs: 300000, retries: 2 });
   if (!response.ok || !response.body) {
     throw new Error(`Failed to download video: ${response.status}`);
   }
@@ -320,15 +321,17 @@ function cleanup(...paths: string[]) {
 
 export async function transcribeVideo(
   videoUrl: string,
-  modelPath: string
+  modelPath: string,
+  language?: string
 ): Promise<string> {
-  const result = await transcribeVideoStructured(videoUrl, modelPath);
+  const result = await transcribeVideoStructured(videoUrl, modelPath, language);
   return renderTranscript(result);
 }
 
 export async function transcribeVideoStructured(
   videoUrl: string,
-  modelPath: string
+  modelPath: string,
+  language?: string
 ): Promise<TranscriptResult> {
   let videoPath = getCachedVideoPath(videoUrl);
   let downloadedFresh = false;
@@ -340,7 +343,7 @@ export async function transcribeVideoStructured(
       cacheVideo(videoUrl, videoPath);
     }
     audioPath = await extractAudio(videoPath);
-    return await transcribe(audioPath, modelPath);
+    return await transcribe(audioPath, modelPath, { language });
   } finally {
     if (downloadedFresh && videoPath) cleanup(videoPath);
     if (audioPath) cleanup(audioPath);
@@ -350,7 +353,7 @@ export async function transcribeVideoStructured(
 
 async function fetchThread(tweetId: string, apiKey: string): Promise<Tweet[]> {
   try {
-    const response = await fetch(
+    const response = await fetchWithRetry(
       `${THREAD_ENDPOINT}?tweetId=${tweetId}`,
       { headers: { "x-api-key": apiKey } }
     );
@@ -367,7 +370,7 @@ async function fetchArticle(
   apiKey: string
 ): Promise<{ title: string; content: string } | null> {
   try {
-    const response = await fetch(
+    const response = await fetchWithRetry(
       `${ARTICLE_ENDPOINT}?tweet_id=${tweetId}`,
       { headers: { "x-api-key": apiKey } }
     );
@@ -477,7 +480,7 @@ export async function fetchUserProfile(
     return userProfileFromApi(data, username);
   }
 
-  const response = await fetch(`${USER_INFO_ENDPOINT}?userName=${encodeURIComponent(username)}`, {
+  const response = await fetchWithRetry(`${USER_INFO_ENDPOINT}?userName=${encodeURIComponent(username)}`, {
     headers: { "x-api-key": apiKey },
   });
 
@@ -513,7 +516,7 @@ export async function fetchUserTweets(
   let url = `${USER_TWEETS_ENDPOINT}?userName=${encodeURIComponent(username)}`;
   if (cursor) url += `&cursor=${encodeURIComponent(cursor)}`;
 
-  const response = await fetch(url, {
+  const response = await fetchWithRetry(url, {
     headers: { "x-api-key": apiKey },
   });
 
@@ -549,7 +552,7 @@ export async function fetchUserFollowers(
   let url = `${USER_FOLLOWERS_ENDPOINT}?userName=${encodeURIComponent(username)}`;
   if (cursor) url += `&cursor=${encodeURIComponent(cursor)}`;
 
-  const response = await fetch(url, {
+  const response = await fetchWithRetry(url, {
     headers: { "x-api-key": apiKey },
   });
 
@@ -583,7 +586,7 @@ export async function fetchUserFollowing(
   let url = `${USER_FOLLOWING_ENDPOINT}?userName=${encodeURIComponent(username)}`;
   if (cursor) url += `&cursor=${encodeURIComponent(cursor)}`;
 
-  const response = await fetch(url, {
+  const response = await fetchWithRetry(url, {
     headers: { "x-api-key": apiKey },
   });
 
@@ -618,7 +621,7 @@ export async function fetchTweetReplies(
   let url = `${TWEET_REPLIES_ENDPOINT}?tweetId=${tweetId}`;
   if (cursor) url += `&cursor=${encodeURIComponent(cursor)}`;
 
-  const response = await fetch(url, { headers: { "x-api-key": apiKey } });
+  const response = await fetchWithRetry(url, { headers: { "x-api-key": apiKey } });
   if (!response.ok) throw new Error(`Twitter API error: ${response.status} ${await response.text()}`);
 
   const data = await response.json() as { tweets?: Tweet[]; has_next_page?: boolean; next_cursor?: string };
@@ -648,7 +651,7 @@ export async function fetchTweetQuotes(
   let url = `${TWEET_QUOTES_ENDPOINT}?tweetId=${tweetId}`;
   if (cursor) url += `&cursor=${encodeURIComponent(cursor)}`;
 
-  const response = await fetch(url, { headers: { "x-api-key": apiKey } });
+  const response = await fetchWithRetry(url, { headers: { "x-api-key": apiKey } });
   if (!response.ok) throw new Error(`Twitter API error: ${response.status} ${await response.text()}`);
 
   const data = await response.json() as { tweets?: Tweet[]; has_next_page?: boolean; next_cursor?: string };
@@ -678,7 +681,7 @@ export async function fetchTweetRetweeters(
   let url = `${TWEET_RETWEETERS_ENDPOINT}?tweetId=${tweetId}`;
   if (cursor) url += `&cursor=${encodeURIComponent(cursor)}`;
 
-  const response = await fetch(url, { headers: { "x-api-key": apiKey } });
+  const response = await fetchWithRetry(url, { headers: { "x-api-key": apiKey } });
   if (!response.ok) throw new Error(`Twitter API error: ${response.status} ${await response.text()}`);
 
   const data = await response.json() as { users?: any[]; has_next_page?: boolean; next_cursor?: string };
@@ -708,7 +711,7 @@ export async function searchTweets(
   let url = `${SEARCH_ENDPOINT}?query=${encodeURIComponent(query)}`;
   if (cursor) url += `&cursor=${encodeURIComponent(cursor)}`;
 
-  const response = await fetch(url, { headers: { "x-api-key": apiKey } });
+  const response = await fetchWithRetry(url, { headers: { "x-api-key": apiKey } });
   if (!response.ok) throw new Error(`Twitter API error: ${response.status} ${await response.text()}`);
 
   const data = await response.json() as { tweets?: Tweet[]; has_next_page?: boolean; next_cursor?: string };
@@ -733,7 +736,7 @@ export async function fetchTrends(
     }));
   }
 
-  const response = await fetch(`${TRENDS_ENDPOINT}?woeid=${woeid}`, {
+  const response = await fetchWithRetry(`${TRENDS_ENDPOINT}?woeid=${woeid}`, {
     headers: { "x-api-key": apiKey },
   });
   if (!response.ok) throw new Error(`Twitter API error: ${response.status} ${await response.text()}`);
@@ -752,7 +755,7 @@ export async function fetchUserAbout(
 ): Promise<any> {
   if (usingXquik()) return await fetchUserProfile(username, apiKey);
 
-  const response = await fetch(`${USER_ABOUT_ENDPOINT}?userName=${encodeURIComponent(username)}`, {
+  const response = await fetchWithRetry(`${USER_ABOUT_ENDPOINT}?userName=${encodeURIComponent(username)}`, {
     headers: { "x-api-key": apiKey },
   });
   if (!response.ok) throw new Error(`Twitter API error: ${response.status} ${await response.text()}`);
@@ -779,7 +782,7 @@ export async function fetchUserMentions(
 
   let url = `${USER_MENTIONS_ENDPOINT}?userName=${encodeURIComponent(username)}`;
   if (cursor) url += `&cursor=${encodeURIComponent(cursor)}`;
-  const response = await fetch(url, { headers: { "x-api-key": apiKey } });
+  const response = await fetchWithRetry(url, { headers: { "x-api-key": apiKey } });
   if (!response.ok) throw new Error(`Twitter API error: ${response.status} ${await response.text()}`);
   const data = await response.json() as { tweets?: Tweet[]; has_next_page?: boolean; next_cursor?: string };
   return {
@@ -798,7 +801,7 @@ export async function searchUsers(
     return (data.users ?? []).map((user) => userProfileFromApi(user));
   }
 
-  const response = await fetch(`${USER_SEARCH_ENDPOINT}?query=${encodeURIComponent(query)}`, {
+  const response = await fetchWithRetry(`${USER_SEARCH_ENDPOINT}?query=${encodeURIComponent(query)}`, {
     headers: { "x-api-key": apiKey },
   });
   if (!response.ok) throw new Error(`Twitter API error: ${response.status} ${await response.text()}`);
@@ -826,7 +829,7 @@ export async function fetchVerifiedFollowers(
 
   let url = `${VERIFIED_FOLLOWERS_ENDPOINT}?userName=${encodeURIComponent(username)}`;
   if (cursor) url += `&cursor=${encodeURIComponent(cursor)}`;
-  const response = await fetch(url, { headers: { "x-api-key": apiKey } });
+  const response = await fetchWithRetry(url, { headers: { "x-api-key": apiKey } });
   if (!response.ok) throw new Error(`Twitter API error: ${response.status} ${await response.text()}`);
   const data = await response.json() as { followers?: any[]; has_next_page?: boolean; next_cursor?: string };
   const users: UserProfile[] = (data.followers ?? []).map((u: any) => ({ ...userProfileFromApi(u), verified: true }));
@@ -850,7 +853,7 @@ export async function checkFollowRelationship(
     };
   }
 
-  const response = await fetch(
+  const response = await fetchWithRetry(
     `${CHECK_FOLLOW_ENDPOINT}?source_user_name=${encodeURIComponent(sourceUsername)}&target_user_name=${encodeURIComponent(targetUsername)}`,
     { headers: { "x-api-key": apiKey } }
   );
@@ -872,7 +875,7 @@ export async function fetchTweetRepliesV2(
   apiKey = requireTwitterApi(apiKey);
   let url = `${TWEET_REPLIES_V2_ENDPOINT}?tweetId=${tweetId}&sortBy=${sortBy}`;
   if (cursor) url += `&cursor=${encodeURIComponent(cursor)}`;
-  const response = await fetch(url, { headers: { "x-api-key": apiKey } });
+  const response = await fetchWithRetry(url, { headers: { "x-api-key": apiKey } });
   if (!response.ok) throw new Error(`Twitter API error: ${response.status} ${await response.text()}`);
   const data = await response.json() as { tweets?: Tweet[]; has_next_page?: boolean; next_cursor?: string };
   return {
@@ -890,7 +893,7 @@ export async function fetchListTimeline(
   apiKey = requireTwitterApi(apiKey);
   let url = `${LIST_TIMELINE_ENDPOINT}?listId=${listId}`;
   if (cursor) url += `&cursor=${encodeURIComponent(cursor)}`;
-  const response = await fetch(url, { headers: { "x-api-key": apiKey } });
+  const response = await fetchWithRetry(url, { headers: { "x-api-key": apiKey } });
   if (!response.ok) throw new Error(`Twitter API error: ${response.status} ${await response.text()}`);
   const data = await response.json() as { tweets?: Tweet[]; has_next_page?: boolean; next_cursor?: string };
   return {
@@ -908,7 +911,7 @@ export async function fetchCommunityTweets(
   apiKey = requireTwitterApi(apiKey);
   let url = `${COMMUNITY_TWEETS_ENDPOINT}?communityId=${communityId}`;
   if (cursor) url += `&cursor=${encodeURIComponent(cursor)}`;
-  const response = await fetch(url, { headers: { "x-api-key": apiKey } });
+  const response = await fetchWithRetry(url, { headers: { "x-api-key": apiKey } });
   if (!response.ok) throw new Error(`Twitter API error: ${response.status} ${await response.text()}`);
   const data = await response.json() as { tweets?: Tweet[]; has_next_page?: boolean; next_cursor?: string };
   return {
@@ -923,7 +926,7 @@ export async function fetchSpaceDetail(
   apiKey: string
 ): Promise<any> {
   apiKey = requireTwitterApi(apiKey);
-  const response = await fetch(`${SPACE_DETAIL_ENDPOINT}?spaceId=${spaceId}`, {
+  const response = await fetchWithRetry(`${SPACE_DETAIL_ENDPOINT}?spaceId=${spaceId}`, {
     headers: { "x-api-key": apiKey },
   });
   if (!response.ok) throw new Error(`Twitter API error: ${response.status} ${await response.text()}`);
@@ -939,7 +942,7 @@ export async function fetchBookmarks(
   apiKey = requireTwitterApi(apiKey);
   const body: any = { login_cookie: loginCookie };
   if (cursor) body.cursor = cursor;
-  const response = await fetch(BOOKMARKS_ENDPOINT, {
+  const response = await fetchWithRetry(BOOKMARKS_ENDPOINT, {
     method: "POST",
     headers: { "x-api-key": apiKey, "Content-Type": "application/json" },
     body: JSON.stringify(body),
@@ -958,7 +961,7 @@ export async function addUserToMonitor(
   apiKey: string
 ): Promise<any> {
   apiKey = requireTwitterApi(apiKey);
-  const response = await fetch(MONITOR_ADD_ENDPOINT, {
+  const response = await fetchWithRetry(MONITOR_ADD_ENDPOINT, {
     method: "POST",
     headers: { "x-api-key": apiKey, "Content-Type": "application/json" },
     body: JSON.stringify({ user_name: username }),
@@ -969,7 +972,7 @@ export async function addUserToMonitor(
 
 export async function getMonitoredUsers(apiKey: string): Promise<any> {
   apiKey = requireTwitterApi(apiKey);
-  const response = await fetch(MONITOR_LIST_ENDPOINT, { headers: { "x-api-key": apiKey } });
+  const response = await fetchWithRetry(MONITOR_LIST_ENDPOINT, { headers: { "x-api-key": apiKey } });
   if (!response.ok) throw new Error(`Twitter API error: ${response.status} ${await response.text()}`);
   return await response.json();
 }
@@ -979,7 +982,7 @@ export async function removeUserFromMonitor(
   apiKey: string
 ): Promise<any> {
   apiKey = requireTwitterApi(apiKey);
-  const response = await fetch(MONITOR_REMOVE_ENDPOINT, {
+  const response = await fetchWithRetry(MONITOR_REMOVE_ENDPOINT, {
     method: "POST",
     headers: { "x-api-key": apiKey, "Content-Type": "application/json" },
     body: JSON.stringify({ user_name: username }),
@@ -995,7 +998,7 @@ export async function addFilterRule(
   apiKey: string
 ): Promise<any> {
   apiKey = requireTwitterApi(apiKey);
-  const response = await fetch(FILTER_ADD_ENDPOINT, {
+  const response = await fetchWithRetry(FILTER_ADD_ENDPOINT, {
     method: "POST",
     headers: { "x-api-key": apiKey, "Content-Type": "application/json" },
     body: JSON.stringify({ tag, value }),
@@ -1006,7 +1009,7 @@ export async function addFilterRule(
 
 export async function getFilterRules(apiKey: string): Promise<any> {
   apiKey = requireTwitterApi(apiKey);
-  const response = await fetch(FILTER_LIST_ENDPOINT, { headers: { "x-api-key": apiKey } });
+  const response = await fetchWithRetry(FILTER_LIST_ENDPOINT, { headers: { "x-api-key": apiKey } });
   if (!response.ok) throw new Error(`Twitter API error: ${response.status} ${await response.text()}`);
   return await response.json();
 }
@@ -1016,7 +1019,7 @@ export async function deleteFilterRule(
   apiKey: string
 ): Promise<any> {
   apiKey = requireTwitterApi(apiKey);
-  const response = await fetch(FILTER_DELETE_ENDPOINT, {
+  const response = await fetchWithRetry(FILTER_DELETE_ENDPOINT, {
     method: "DELETE",
     headers: { "x-api-key": apiKey, "Content-Type": "application/json" },
     body: JSON.stringify({ rule_id: ruleId }),
@@ -1042,7 +1045,7 @@ export async function fetchTweet(
     return processTweet(tweetFromXquik(data.tweet, data.author));
   }
 
-  const response = await fetch(`${TWEETS_ENDPOINT}?tweet_ids=${tweetId}`, {
+  const response = await fetchWithRetry(`${TWEETS_ENDPOINT}?tweet_ids=${tweetId}`, {
     headers: { "x-api-key": apiKey },
   });
 
@@ -1060,7 +1063,7 @@ export async function fetchTweet(
 
   if (rawTweet.isQuote && rawTweet.quoted_tweet?.id) {
     try {
-      const qtResponse = await fetch(
+      const qtResponse = await fetchWithRetry(
         `${TWEETS_ENDPOINT}?tweet_ids=${rawTweet.quoted_tweet.id}`,
         { headers: { "x-api-key": apiKey } }
       );

@@ -25,7 +25,7 @@ export interface YouTubeTranscript {
   source: "captions" | "whisper";
 }
 
-function extractVideoId(input: string): string {
+export function extractVideoId(input: string): string {
   const watchMatch = input.match(/[?&]v=([a-zA-Z0-9_-]{11})/);
   if (watchMatch) return watchMatch[1];
   const shortMatch = input.match(/youtu\.be\/([a-zA-Z0-9_-]{11})/);
@@ -66,12 +66,13 @@ function cleanup(...paths: string[]) {
 
 async function transcribeYouTubeVideo(
   videoId: string,
-  modelPath: string
+  modelPath: string,
+  language?: string
 ): Promise<string> {
   let audioPath = "";
   try {
     audioPath = await downloadAudioWithYtDlp(videoId);
-    const result = await transcribe(audioPath, modelPath);
+    const result = await transcribe(audioPath, modelPath, { language });
     return renderTranscript(result);
   } finally {
     cleanup(audioPath);
@@ -80,12 +81,14 @@ async function transcribeYouTubeVideo(
 
 export async function fetchYouTubeTranscript(
   url: string,
-  modelPath?: string
+  modelPath?: string,
+  language?: string
 ): Promise<YouTubeTranscript> {
   const videoId = extractVideoId(url);
 
   try {
-    const segments = await fetchTranscript(videoId);
+    const captionLang = language && language !== "auto" ? { lang: language } : undefined;
+    const segments = await fetchTranscript(videoId, captionLang);
     if (segments.length > 0) {
       return {
         videoId,
@@ -106,7 +109,7 @@ export async function fetchYouTubeTranscript(
     );
   }
 
-  const transcription = await transcribeYouTubeVideo(videoId, modelPath);
+  const transcription = await transcribeYouTubeVideo(videoId, modelPath, language);
   return {
     videoId,
     text: transcription,

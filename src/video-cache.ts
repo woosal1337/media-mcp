@@ -3,7 +3,9 @@ import { existsSync, mkdirSync, statSync, copyFileSync, unlinkSync, readdirSync 
 import { homedir } from "node:os";
 import { join, extname } from "node:path";
 
-const CACHE_DIR = join(homedir(), ".media-mcp", "cache", "videos");
+const CACHE_DIR = process.env.MEDIA_MCP_CACHE_DIR
+  ? join(process.env.MEDIA_MCP_CACHE_DIR, "videos")
+  : join(homedir(), ".media-mcp", "cache", "videos");
 const DEFAULT_TTL_MS = 24 * 60 * 60 * 1000;
 
 function ensureCacheDir() {

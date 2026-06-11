@@ -209,12 +209,13 @@ Requires self-hosted Cobalt instance (`COBALT_API_URL`).
 | TwitterAPI.io key | Powers all 26 Twitter/X tools | Yes, unless only using Xquik-supported read tools |
 | Xquik API key | Powers overlapping read-only Twitter/X tools | Optional |
 | Cobalt instance | Instagram media downloads | Only for Instagram |
+| Whisper model | Auto-downloaded to `~/.media-mcp/models` on first use, or set `WHISPER_MODEL_PATH` | Auto |
 
 ## How Transcription Works
 
 1. Video is downloaded to a temp file (via direct HTTP, yt-dlp, or Cobalt)
 2. ffmpeg extracts audio as 16kHz mono WAV: `ffmpeg -i video.mp4 -ar 16000 -ac 1 -f wav audio.wav`
-3. whisper-cli transcribes locally with segment-level timestamps AND per-token confidence: `whisper-cli -m <model> -f audio.wav -l en -ojf`. Per-token probabilities are parsed; tokens with `p < 0.5` are flagged. Output is rendered as: `[HH:MM:SS.mmm --> HH:MM:SS.mmm]  text with ⟨uncertain-token p=0.XX⟩ markers` followed by an **Uncertainty zones** summary and **Demonstrative phrases** block.
+3. whisper-cli transcribes locally with segment-level timestamps AND per-token confidence: `whisper-cli -m <model> -f audio.wav -l <lang> -ojf`. The language comes from the tool's `language` param (ISO 639-1 or `auto`, default English) and the model from its `model` param (`tiny` → `large-v3-turbo`, auto-downloaded to `~/.media-mcp/models`, or a custom .bin path). Per-token probabilities are parsed; tokens with `p < 0.5` are flagged. Output is rendered as: `[HH:MM:SS.mmm --> HH:MM:SS.mmm]  text with ⟨uncertain-token p=0.XX⟩ markers` followed by an **Uncertainty zones** summary and **Demonstrative phrases** block.
 4. Temp files (video + audio) are cleaned up automatically
 
 All transcription happens on your machine. No audio is sent to external services.

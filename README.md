@@ -4,6 +4,10 @@
 
 # media-mcp
 
+[![CI](https://github.com/woosal1337/media-mcp/actions/workflows/ci.yml/badge.svg)](https://github.com/woosal1337/media-mcp/actions/workflows/ci.yml)
+[![npm](https://img.shields.io/npm/v/media-mcp)](https://www.npmjs.com/package/media-mcp)
+[![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](./LICENSE)
+
 Social media at your fingertips. 31 tools across Twitter/X, YouTube, Instagram, and video processing — from Claude Desktop, Claude Code, or any MCP client. 100% open source.
 
 Point it at a tweet and get the full text, metrics, and video transcription. Give it a YouTube URL and get the transcript. Drop an Instagram reel and get the media downloaded plus audio transcribed. All transcription runs locally via Whisper — no audio leaves your machine.
@@ -80,13 +84,40 @@ See [`SKILL.md`](./SKILL.md) for the full pipeline details, tool reference, and 
 
 ## Get started
 
+### npx (fastest)
+
+```bash
+TWITTER_API_KEY=your_key npx media-mcp
+```
+
+Or register it with Claude Code in one command:
+
+```bash
+claude mcp add media-mcp -e TWITTER_API_KEY=your_key -- npx media-mcp
+```
+
+The Whisper base model downloads automatically on first transcription into `~/.media-mcp/models/`. ffmpeg, whisper-cli, and yt-dlp still need to be installed (see Prerequisites).
+
+### Docker
+
+```bash
+docker run -i --rm \
+  -e TWITTER_API_KEY=your_key \
+  -v media-mcp-data:/data \
+  ghcr.io/woosal1337/media-mcp
+```
+
+The image bundles ffmpeg, yt-dlp, and whisper-cli. Models and the video cache persist in the `/data` volume.
+
+### From source
+
 ```bash
 git clone https://github.com/woosal1337/media-mcp.git
 cd media-mcp
 npm install && npm run build
 ```
 
-Download the Whisper model:
+Download the Whisper model (optional — skipped models are fetched on demand):
 
 ```bash
 mkdir -p models
@@ -161,7 +192,9 @@ Add to `~/Library/Application Support/Claude/claude_desktop_config.json` (macOS)
 | `TWITTER_BACKEND` | No | `twitterapi` by default. Use `xquik` for overlapping read tools. |
 | `XQUIK_API_KEY` | Required when `TWITTER_BACKEND=xquik` | API key from [Xquik](https://xquik.com/) |
 | `XQUIK_BASE_URL` | No | Xquik API base URL, defaults to `https://xquik.com/api/v1` |
-| `WHISPER_MODEL_PATH` | No | Path to Whisper model (defaults to `./models/ggml-base.bin`) |
+| `WHISPER_MODEL_PATH` | No | Path to a Whisper model. When unset and no local model exists, the base model is downloaded automatically on first use |
+| `MEDIA_MCP_MODEL_DIR` | No | Where auto-downloaded Whisper models live (defaults to `~/.media-mcp/models`) |
+| `MEDIA_MCP_CACHE_DIR` | No | Where the 24h video cache lives (defaults to `~/.media-mcp/cache`) |
 | `COBALT_API_URL` | No | URL of your Cobalt instance (required for Instagram) |
 | `COBALT_API_KEY` | No | Cobalt API key if auth is enabled |
 | `CLOUDFLARE_ACCOUNT_ID` | No | Cloudflare account ID (required for `fetch_markdown`) |
@@ -177,7 +210,7 @@ TwitterAPI.io remains the default backend for all Twitter/X tools. `TWITTER_BACK
 
 | Tool | Action | What it does |
 |---|---|---|
-| `get_tweet` | **Fetch + Transcribe** | Fetches tweet by URL with text, author, metrics, media, threads, articles. Transcribes video audio via Whisper. |
+| `get_tweet` | **Fetch + Transcribe** | Fetches tweet by URL with text, author, metrics, media, threads, articles. Transcribes video audio via Whisper (optional `language` and `model` params). |
 | `get_user_tweets` | **Fetch** | Recent tweets from a user (paginated, 20/page) |
 | `search_tweets` | **Search** | Advanced search with operators (`from:`, `to:`, `#hashtag`, `min_faves:`, date ranges) |
 | `get_tweet_replies` | **Fetch** | Replies to a tweet (paginated, 20/page) |
@@ -217,13 +250,13 @@ TwitterAPI.io remains the default backend for all Twitter/X tools. `TWITTER_BACK
 
 | Tool | Action | What it does |
 |---|---|---|
-| `get_youtube_transcript` | **Fetch + Transcribe** | Gets video transcript. Tries captions first (instant). Falls back to yt-dlp + ffmpeg + Whisper if no captions. |
+| `get_youtube_transcript` | **Fetch + Transcribe** | Gets video transcript. Tries captions first (instant, in the requested `language` when set). Falls back to yt-dlp + ffmpeg + Whisper if no captions. Optional `language` and `model` params. |
 
 ### Instagram — 1 tool
 
 | Tool | Action | What it does |
 |---|---|---|
-| `get_instagram_post` | **Download + Transcribe** | Downloads all media (images, videos, carousels) to local folder via Cobalt. Transcribes video audio with Whisper. Returns local file paths. |
+| `get_instagram_post` | **Download + Transcribe** | Downloads all media (images, videos, carousels) to local folder via Cobalt. Transcribes video audio with Whisper (optional `language` and `model` params). Returns local file paths. |
 
 ### Cloudflare — 1 tool
 
@@ -346,13 +379,24 @@ Cobalt supports 21 platforms. Currently media-mcp uses it for Instagram. Future 
 
 Copy the contents of [PROMPT.md](./PROMPT.md) and paste it into Claude Code. It will install all prerequisites, clone the repo, configure everything, and connect media-mcp automatically.
 
+## Transcription language and model
+
+All three transcription tools accept two optional parameters:
+
+- **`language`** — ISO 639-1 code (`en`, `es`, `tr`, `de`, ...) or `auto` for autodetection. Defaults to English. On YouTube, captions are requested in this language before Whisper runs.
+- **`model`** — `tiny`, `tiny.en`, `base`, `base.en`, `small`, `small.en`, `medium`, `medium.en`, `large-v3`, or `large-v3-turbo`. Known names are downloaded once from HuggingFace into `~/.media-mcp/models/` and reused. An absolute path to any ggml `.bin` file also works. Bigger models are slower and more accurate — `large-v3-turbo` is the sweet spot when base mishears too much.
+
 ## Development
 
 ```bash
-npm run dev       # watch mode (recompiles on change)
-npm run build     # one-time build
-npm start         # run the server
+npm run dev        # watch mode (recompiles on change)
+npm run build      # one-time build
+npm test           # run the unit test suite
+npm run test:watch # tests in watch mode
+npm start          # run the server
 ```
+
+CI runs build + tests on Node 20 and 22 for every push and PR. Releases are tag-triggered: pushing `v*` publishes to npm with provenance, creates a GitHub Release, and pushes the Docker image to GHCR.
 
 ## License
 

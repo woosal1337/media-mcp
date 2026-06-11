@@ -3,6 +3,7 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";
+import { readFileSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
@@ -20,10 +21,12 @@ import { fetchYouTubeTranscript } from "./youtube.js";
 import { fetchInstagramPost, isInstagramUrl, type MediaItem } from "./instagram.js";
 import { extractFrames, extractFramesAtTimestamps } from "./frames.js";
 import { fetchMarkdown } from "./cloudflare.js";
+import { resolveModelPath, WHISPER_MODELS } from "./whisper-models.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
-const MODEL_PATH = process.env.WHISPER_MODEL_PATH
-  ?? join(__dirname, "..", "models", "ggml-base.bin");
+const packageJson = JSON.parse(
+  readFileSync(join(__dirname, "..", "package.json"), "utf-8")
+) as { version: string };
 
 const TWITTER_API_KEY = process.env.TWITTER_API_KEY;
 const XQUIK_API_KEY = process.env.XQUIK_API_KEY;
@@ -88,11 +91,15 @@ function formatTweetOutput(tweet: ProcessedTweet): string {
   return output;
 }
 
-async function transcribeTweetMedia(tweet: ProcessedTweet): Promise<void> {
+async function transcribeTweetMedia(
+  tweet: ProcessedTweet,
+  modelPath: string,
+  language?: string
+): Promise<void> {
   const video = tweet.media.find((m) => m.type === "video" && m.videoUrl);
   if (video?.videoUrl) {
     try {
-      tweet.videoTranscription = await transcribeVideo(video.videoUrl, MODEL_PATH);
+      tweet.videoTranscription = await transcribeVideo(video.videoUrl, modelPath, language);
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : String(err);
       tweet.videoTranscription = `[Transcription failed: ${message}]`;
@@ -100,10 +107,16 @@ async function transcribeTweetMedia(tweet: ProcessedTweet): Promise<void> {
   }
 }
 
+const languageParam = z.string().optional().describe(
+  "Spoken language for Whisper transcription as an ISO 639-1 code (e.g. 'en', 'es', 'tr', 'de'), or 'auto' to autodetect. Defaults to English."
+);
+const modelParam = z.string().optional().describe(
+  `Whisper model for transcription: ${WHISPER_MODELS.join(" | ")} (downloaded to ~/.media-mcp/models on first use), or an absolute path to a ggml .bin file. Defaults to WHISPER_MODEL_PATH or the local base model.`
+);
 
 const server = new McpServer({
   name: "media-mcp",
-  version: "1.0.0",
+  version: packageJson.version,
 });
 
 server.tool(
@@ -112,15 +125,18 @@ server.tool(
   {
     url: z.string().describe("Twitter/X URL (e.g. https://x.com/user/status/123)"),
     transcribe: z.boolean().default(true).describe("Whether to transcribe video content (default: true)"),
+    language: languageParam,
+    model: modelParam,
   },
-  async ({ url, transcribe }) => {
+  async ({ url, transcribe, language, model }) => {
     try {
       const tweet = await fetchTweet(url, apiKey);
 
       if (transcribe) {
-        await transcribeTweetMedia(tweet);
+        const modelPath = await resolveModelPath(model);
+        await transcribeTweetMedia(tweet, modelPath, language);
         if (tweet.quotedTweet) {
-          await transcribeTweetMedia(tweet.quotedTweet);
+          await transcribeTweetMedia(tweet.quotedTweet, modelPath, language);
         }
       }
 
@@ -658,10 +674,13 @@ server.tool(
   "Fetch the transcript/subtitles of a YouTube video with timestamps. First tries YouTube captions (instant, already timestamped). If no captions exist, downloads the audio and transcribes locally with Whisper, producing segment-level timestamps AND per-token confidence — the output includes **Uncertainty zones** (spans where Whisper is guessing, with midpoint_s timestamps) and **Demonstrative phrases** that often reference on-screen content. When those appear and matter to the user's question, follow up with `get_video_frames_at` using the midpoint_s values to verify visually.",
   {
     url: z.string().describe("YouTube URL (e.g. https://www.youtube.com/watch?v=abc123)"),
+    language: languageParam,
+    model: modelParam,
   },
-  async ({ url }) => {
+  async ({ url, language, model }) => {
     try {
-      const transcript = await fetchYouTubeTranscript(url, MODEL_PATH);
+      const modelPath = await resolveModelPath(model);
+      const transcript = await fetchYouTubeTranscript(url, modelPath, language);
 
       let output = `**YouTube Transcript** (${transcript.videoId})\n`;
       output += `Source: ${transcript.source === "captions" ? "YouTube captions" : "Whisper transcription (no captions available)"}\n\n`;
@@ -697,10 +716,13 @@ server.tool(
   {
     url: z.string().describe("Instagram URL (e.g. https://www.instagram.com/reel/XXXXX/ or https://www.instagram.com/p/XXXXX/)"),
     transcribe: z.boolean().default(true).describe("Whether to transcribe video content (default: true)"),
+    language: languageParam,
+    model: modelParam,
   },
-  async ({ url, transcribe }) => {
+  async ({ url, transcribe, language, model }) => {
     try {
-      const post = await fetchInstagramPost(url, MODEL_PATH, transcribe);
+      const modelPath = transcribe ? await resolveModelPath(model) : undefined;
+      const post = await fetchInstagramPost(url, modelPath, transcribe, language);
 
       let output = `**Instagram Post**\n`;
       output += `**Source:** ${post.url}\n`;

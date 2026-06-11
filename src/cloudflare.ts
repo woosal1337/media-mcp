@@ -1,3 +1,5 @@
+import { fetchWithRetry } from "./http.js";
+
 const CF_ACCOUNT_ID = process.env.CLOUDFLARE_ACCOUNT_ID;
 const CF_API_TOKEN = process.env.CLOUDFLARE_API_TOKEN;
 
@@ -18,7 +20,7 @@ export async function fetchMarkdown(url: string, waitForJs?: boolean): Promise<M
     body.gotoOptions = { waitUntil: "networkidle0" };
   }
 
-  const response = await fetch(
+  const response = await fetchWithRetry(
     `https://api.cloudflare.com/client/v4/accounts/${CF_ACCOUNT_ID}/browser-rendering/markdown`,
     {
       method: "POST",
@@ -27,7 +29,8 @@ export async function fetchMarkdown(url: string, waitForJs?: boolean): Promise<M
         "Authorization": `Bearer ${CF_API_TOKEN}`,
       },
       body: JSON.stringify(body),
-    }
+    },
+    { timeoutMs: 120000 }
   );
 
   if (!response.ok) {

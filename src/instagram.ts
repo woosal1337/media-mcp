@@ -7,6 +7,7 @@ import { join } from "node:path";
 import { randomUUID } from "node:crypto";
 import { transcribe, renderTranscript } from "./transcribe.js";
 import { cacheVideo } from "./video-cache.js";
+import { fetchWithRetry } from "./http.js";
 
 const COBALT_API_URL = process.env.COBALT_API_URL;
 const COBALT_API_KEY = process.env.COBALT_API_KEY;
@@ -32,7 +33,7 @@ export function isInstagramUrl(input: string): boolean {
   return /(?:instagram\.com|instagr\.am)\/(p|reel|reels|tv)\/[\w-]+/i.test(input);
 }
 
-function normalizeUrl(input: string): string {
+export function normalizeUrl(input: string): string {
   const match = input.match(
     /(?:https?:\/\/)?(?:www\.)?(?:instagram\.com|instagr\.am)\/(p|reel|reels|tv)\/([\w-]+)/i
   );
@@ -64,7 +65,7 @@ async function fetchCobaltUrl(url: string): Promise<CobaltResponse> {
     headers["Authorization"] = `Api-Key ${COBALT_API_KEY}`;
   }
 
-  const response = await fetch(`${COBALT_API_URL}/`, {
+  const response = await fetchWithRetry(`${COBALT_API_URL}/`, {
     method: "POST",
     headers,
     body: JSON.stringify({
@@ -72,7 +73,7 @@ async function fetchCobaltUrl(url: string): Promise<CobaltResponse> {
       videoQuality: "1080",
       filenameStyle: "basic",
     }),
-  });
+  }, { timeoutMs: 120000 });
 
   if (!response.ok) {
     const text = await response.text();
@@ -92,7 +93,7 @@ function guessExtension(url: string): string {
 }
 
 async function downloadFile(url: string, filePath: string): Promise<void> {
-  const response = await fetch(url);
+  const response = await fetchWithRetry(url, undefined, { timeoutMs: 300000, retries: 2 });
   if (!response.ok || !response.body) {
     throw new Error(`Failed to download file: ${response.status}`);
   }
@@ -153,12 +154,13 @@ function cleanup(...paths: string[]) {
 
 async function transcribeVideo(
   videoPath: string,
-  modelPath: string
+  modelPath: string,
+  language?: string
 ): Promise<string> {
   let audioPath = "";
   try {
     audioPath = await extractAudio(videoPath);
-    const result = await transcribe(audioPath, modelPath);
+    const result = await transcribe(audioPath, modelPath, { language });
     return renderTranscript(result);
   } finally {
     cleanup(audioPath);
@@ -168,7 +170,8 @@ async function transcribeVideo(
 export async function fetchInstagramPost(
   input: string,
   modelPath?: string,
-  transcribe: boolean = true
+  transcribe: boolean = true,
+  language?: string
 ): Promise<InstagramPost> {
   if (!COBALT_API_URL) {
     throw new Error("COBALT_API_URL environment variable is required for Instagram support");
@@ -234,7 +237,7 @@ export async function fetchInstagramPost(
       const transcriptions: string[] = [];
       for (const video of videoItems) {
         try {
-          const text = await transcribeVideo(video.localPath!, modelPath);
+          const text = await transcribeVideo(video.localPath!, modelPath, language);
           transcriptions.push(text);
         } catch (err: unknown) {
           const message = err instanceof Error ? err.message : String(err);
