@@ -32,7 +32,7 @@ export function isInstagramUrl(input: string): boolean {
   return /(?:instagram\.com|instagr\.am)\/(p|reel|reels|tv)\/[\w-]+/i.test(input);
 }
 
-function normalizeUrl(input: string): string {
+export function normalizeUrl(input: string): string {
   const match = input.match(
     /(?:https?:\/\/)?(?:www\.)?(?:instagram\.com|instagr\.am)\/(p|reel|reels|tv)\/([\w-]+)/i
   );

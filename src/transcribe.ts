@@ -85,7 +85,17 @@ export async function transcribe(
   const raw = JSON.parse(readFileSync(jsonPath, "utf-8"));
   try { unlinkSync(jsonPath); } catch { /* ignore */ }
 
-  const segments: WhisperSegment[] = (raw.transcription ?? []).map((s: any) => {
+  const segments = parseWhisperJson(raw);
+  const uncertainty_spans = findUncertaintySpans(segments, threshold);
+  const demonstratives = findDemonstratives(segments);
+  const formatted = formatTranscript(segments, threshold);
+
+  return { segments, uncertainty_spans, demonstratives, formatted };
+}
+
+export function parseWhisperJson(raw: unknown): WhisperSegment[] {
+  const transcription = (raw as { transcription?: any[] })?.transcription ?? [];
+  return transcription.map((s: any) => {
     const tokens: WhisperToken[] = (s.tokens ?? [])
       .filter((t: any) => !(t.text as string).startsWith("[_"))
       .map((t: any) => ({
@@ -101,15 +111,9 @@ export async function transcribe(
       tokens,
     };
   });
-
-  const uncertainty_spans = findUncertaintySpans(segments, threshold);
-  const demonstratives = findDemonstratives(segments);
-  const formatted = formatTranscript(segments, threshold);
-
-  return { segments, uncertainty_spans, demonstratives, formatted };
 }
 
-function findUncertaintySpans(
+export function findUncertaintySpans(
   segments: WhisperSegment[],
   threshold: number
 ): UncertaintySpan[] {
@@ -161,7 +165,7 @@ function findUncertaintySpans(
   return spans;
 }
 
-function findDemonstratives(segments: WhisperSegment[]): DemonstrativeHit[] {
+export function findDemonstratives(segments: WhisperSegment[]): DemonstrativeHit[] {
   const hits: DemonstrativeHit[] = [];
   for (const seg of segments) {
     const matches = seg.text.matchAll(DEMONSTRATIVE_REGEX);
@@ -181,7 +185,7 @@ function findDemonstratives(segments: WhisperSegment[]): DemonstrativeHit[] {
   return hits;
 }
 
-function formatTranscript(segments: WhisperSegment[], threshold: number): string {
+export function formatTranscript(segments: WhisperSegment[], threshold: number): string {
   const lines: string[] = [];
   for (const seg of segments) {
     const ts = `[${msToTimestamp(seg.t0)} --> ${msToTimestamp(seg.t1)}]`;

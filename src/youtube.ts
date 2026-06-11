@@ -25,7 +25,7 @@ export interface YouTubeTranscript {
   source: "captions" | "whisper";
 }
 
-function extractVideoId(input: string): string {
+export function extractVideoId(input: string): string {
   const watchMatch = input.match(/[?&]v=([a-zA-Z0-9_-]{11})/);
   if (watchMatch) return watchMatch[1];
   const shortMatch = input.match(/youtu\.be\/([a-zA-Z0-9_-]{11})/);

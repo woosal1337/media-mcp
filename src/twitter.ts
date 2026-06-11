@@ -119,7 +119,7 @@ export interface ProcessedMedia {
   videoUrl?: string;
 }
 
-function extractTweetId(input: string): string {
+export function extractTweetId(input: string): string {
   const match = input.match(/(?:twitter\.com|x\.com)\/\w+\/status\/(\d+)/);
   if (match) return match[1];
   if (/^\d+$/.test(input)) return input;
