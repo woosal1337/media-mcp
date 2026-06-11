@@ -6,6 +6,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { randomUUID } from "node:crypto";
 import { cacheVideo, getCachedVideoPath } from "./video-cache.js";
+import { fetchWithRetry } from "./http.js";
 
 export interface FrameExtractionResult {
   folder: string;
@@ -19,7 +20,7 @@ export interface FrameExtractionResult {
 
 export async function downloadVideoToTemp(url: string): Promise<string> {
   const filePath = join(tmpdir(), `media-mcp-vid-${randomUUID()}.mp4`);
-  const response = await fetch(url);
+  const response = await fetchWithRetry(url, undefined, { timeoutMs: 600000, retries: 2 });
   if (!response.ok || !response.body) {
     throw new Error(`Failed to download video: ${response.status}`);
   }
