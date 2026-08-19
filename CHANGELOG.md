@@ -2,6 +2,18 @@
 
 All notable changes to media-mcp are documented here. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project adheres to [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+### Added
+
+- Optional Xquik backend for the 15 Twitter/X read tools that overlap with TwitterAPI.io. Set `TWITTER_BACKEND=xquik` with `XQUIK_API_KEY`. TwitterAPI.io stays the default, and both backends return the same tool output. `XQUIK_BASE_URL` overrides the API base. Thanks to [@kriptoburak](https://github.com/kriptoburak) in [#1](https://github.com/woosal1337/media-mcp/pull/1).
+- Unit tests for the backend selector and the Xquik tweet mapping.
+
+### Fixed
+
+- Xquik requests now go through the shared retry layer. They had used a bare `fetch`, so a 429 or a 5xx from Xquik failed at once, and a hung connection never timed out.
+- Xquik video tweets keep their video URL and duration. The media mapping dropped `videoVariants` and `durationMillis`, so `videoUrl` stayed empty. Tweet video transcription and frame extraction never started on the Xquik backend. An `animated_gif` now maps to video, the same as on TwitterAPI.io.
+
 ## [1.2.0] - 2026-06-11
 
 ### Added

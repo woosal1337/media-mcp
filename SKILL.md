@@ -135,7 +135,11 @@ URL ──► detect source type
 
 ### Twitter/X — 26 tools
 
-TwitterAPI.io remains the default backend for all Twitter tools and requires `TWITTER_API_KEY`. Set `TWITTER_BACKEND=xquik` with `XQUIK_API_KEY` to use Xquik for overlapping read tools. Spaces, lists, communities, bookmarks, monitors, and filter rules still require `TWITTER_API_KEY`.
+TwitterAPI.io is the default backend for all Twitter tools and requires `TWITTER_API_KEY`. Set `TWITTER_BACKEND=xquik` with `XQUIK_API_KEY` to send the overlapping read tools to Xquik instead. Both backends return the same tool output.
+
+These 15 tools run on either backend: `get_tweet`, `get_user_profile`, `get_user_about`, `get_user_tweets`, `get_user_followers`, `get_user_following`, `get_verified_followers`, `get_user_mentions`, `get_tweet_replies`, `get_tweet_quotes`, `get_tweet_retweeters`, `search_tweets`, `search_users`, `check_follow_relationship`, `get_trends`.
+
+These stay on TwitterAPI.io and still need `TWITTER_API_KEY`: `get_tweet_replies_v2`, `get_list_timeline`, `get_community_tweets`, `get_space_detail`, `get_bookmarks`, the 3 monitor tools, and the 3 filter-rule tools.
 
 #### Fetching tweets
 

@@ -189,7 +189,7 @@ Add to `~/Library/Application Support/Claude/claude_desktop_config.json` (macOS)
 | Variable | Required | Description |
 |---|---|---|
 | `TWITTER_API_KEY` | Yes, unless `TWITTER_BACKEND=xquik` | API key from [twitterapi.io](https://twitterapi.io/) |
-| `TWITTER_BACKEND` | No | `twitterapi` by default. Use `xquik` for overlapping read tools. |
+| `TWITTER_BACKEND` | No | `twitterapi` by default. Use `xquik` for overlapping read tools. When only `XQUIK_API_KEY` is set, the server picks `xquik` on its own. |
 | `XQUIK_API_KEY` | Required when `TWITTER_BACKEND=xquik` | API key from [Xquik](https://xquik.com/) |
 | `XQUIK_BASE_URL` | No | Xquik API base URL, defaults to `https://xquik.com/api/v1` |
 | `WHISPER_MODEL_PATH` | No | Path to a Whisper model. When unset and no local model exists, the base model is downloaded automatically on first use |
@@ -204,7 +204,14 @@ Add to `~/Library/Application Support/Claude/claude_desktop_config.json` (macOS)
 
 ### Twitter/X — 26 tools
 
-TwitterAPI.io remains the default backend for all Twitter/X tools. `TWITTER_BACKEND=xquik` supports the overlapping read tools for tweets, profiles, timelines, followers, following, mentions, search, retweeters, follow checks, and trends. Tools for Spaces, lists, communities, bookmarks, monitors, and filter rules still require `TWITTER_API_KEY`.
+TwitterAPI.io is the default backend for all Twitter/X tools. Set `TWITTER_BACKEND=xquik` with `XQUIK_API_KEY` to send the overlapping read tools to [Xquik](https://xquik.com/) instead. Both backends return the same tool output, so nothing else changes.
+
+| Backend coverage | Tools |
+|---|---|
+| Either backend | `get_tweet`, `get_user_profile`, `get_user_about`, `get_user_tweets`, `get_user_followers`, `get_user_following`, `get_verified_followers`, `get_user_mentions`, `get_tweet_replies`, `get_tweet_quotes`, `get_tweet_retweeters`, `search_tweets`, `search_users`, `check_follow_relationship`, `get_trends` |
+| TwitterAPI.io only | `get_tweet_replies_v2`, `get_list_timeline`, `get_community_tweets`, `get_space_detail`, `get_bookmarks`, the 3 monitor tools, the 3 filter-rule tools |
+
+A TwitterAPI.io-only tool throws a clear error when you run `TWITTER_BACKEND=xquik` without `TWITTER_API_KEY`. Set both keys to use every tool and still read through Xquik.
 
 #### Fetching tweets
 

@@ -43,7 +43,8 @@ const FILTER_DELETE_ENDPOINT = `${TWITTER_API_BASE}/oapi/tweet_filter/delete_rul
 const BOOKMARKS_ENDPOINT = `${TWITTER_API_BASE}/twitter/bookmarks_v2`;
 const XQUIK_API_BASE = (process.env.XQUIK_BASE_URL ?? "https://xquik.com/api/v1").replace(/\/+$/, "");
 
-function twitterBackend(): "twitterapi" | "xquik" {
+/** Exported for tests. */
+export function twitterBackend(): "twitterapi" | "xquik" {
   const configured = process.env.TWITTER_BACKEND?.toLowerCase();
   if (configured === "xquik") return "xquik";
   if (!process.env.TWITTER_API_KEY && process.env.XQUIK_API_KEY) return "xquik";
@@ -79,7 +80,7 @@ async function fetchXquikJson<T>(
   apiKey: string,
   params?: Record<string, string | number | boolean | undefined>
 ): Promise<T> {
-  const response = await fetch(xquikUrl(path, params), {
+  const response = await fetchWithRetry(xquikUrl(path, params), {
     headers: { "x-api-key": xquikApiKey(apiKey) },
   });
   if (!response.ok) {
@@ -88,13 +89,13 @@ async function fetchXquikJson<T>(
   return await response.json() as T;
 }
 
-interface TweetMediaVariant {
+export interface TweetMediaVariant {
   bitrate?: number;
   content_type: string;
   url: string;
 }
 
-interface TweetMedia {
+export interface TweetMedia {
   type: "video" | "photo";
   media_url_https: string;
   video_info?: {
@@ -103,18 +104,18 @@ interface TweetMedia {
   };
 }
 
-interface TweetEntities {
+export interface TweetEntities {
   urls?: Array<{ expanded_url?: string }>;
 }
 
-interface TweetAuthor {
+export interface TweetAuthor {
   userName: string;
   name: string;
   profilePicture: string;
   followers: number;
 }
 
-interface Tweet {
+export interface Tweet {
   id: string;
   url: string;
   text: string;
@@ -132,7 +133,7 @@ interface Tweet {
   isQuote: boolean;
 }
 
-interface XquikUser {
+export interface XquikUser {
   id?: string;
   username?: string;
   userName?: string;
@@ -160,7 +161,15 @@ interface XquikUser {
   url?: string;
 }
 
-interface XquikTweet {
+export interface XquikMedia {
+  type?: string;
+  mediaUrl?: string;
+  url?: string;
+  durationMillis?: number;
+  videoVariants?: Array<{ bitrate?: number; contentType?: string; url?: string }>;
+}
+
+export interface XquikTweet {
   id?: string;
   url?: string;
   text?: string;
@@ -173,7 +182,7 @@ interface XquikTweet {
   bookmarkCount?: number;
   lang?: string;
   author?: XquikUser;
-  media?: Array<{ type?: string; mediaUrl?: string; url?: string }>;
+  media?: XquikMedia[];
   entities?: TweetEntities;
   quoted_tweet?: XquikTweet | Tweet | null;
   isQuoteStatus?: boolean;
@@ -438,7 +447,34 @@ function userProfileFromApi(u: XquikUser, username = ""): UserProfile {
   };
 }
 
-function tweetFromXquik(tweet: XquikTweet, author?: XquikUser): Tweet {
+// Xquik returns videoVariants and durationMillis. Map them onto video_info so
+// processMedia can pick a videoUrl. Without it, tweet video transcription and
+// frame extraction never trigger on the Xquik backend.
+function mediaFromXquik(m: XquikMedia): TweetMedia {
+  const isVideo = m.type === "video" || m.type === "animated_gif";
+  const media: TweetMedia = {
+    type: isVideo ? "video" : "photo",
+    media_url_https: m.mediaUrl ?? m.url ?? "",
+  };
+
+  if (isVideo && m.videoVariants?.length) {
+    media.video_info = {
+      duration_millis: m.durationMillis ?? 0,
+      variants: m.videoVariants
+        .filter((v): v is { bitrate?: number; contentType?: string; url: string } => Boolean(v.url))
+        .map((v) => ({
+          bitrate: v.bitrate,
+          content_type: v.contentType ?? "video/mp4",
+          url: v.url,
+        })),
+    };
+  }
+
+  return media;
+}
+
+/** Exported for tests. */
+export function tweetFromXquik(tweet: XquikTweet, author?: XquikUser): Tweet {
   const tweetAuthor = tweet.author ?? author ?? {};
   return {
     id: tweet.id ?? "",
@@ -458,12 +494,7 @@ function tweetFromXquik(tweet: XquikTweet, author?: XquikUser): Tweet {
       followers: tweetAuthor.followers ?? tweetAuthor.followers_count ?? 0,
     },
     extendedEntities: tweet.media?.length
-      ? {
-        media: tweet.media.map((m) => ({
-          type: m.type === "video" ? "video" : "photo",
-          media_url_https: m.mediaUrl ?? m.url ?? "",
-        })),
-      }
+      ? { media: tweet.media.map(mediaFromXquik) }
       : undefined,
     entities: tweet.entities,
     quoted_tweet: tweet.quoted_tweet ? tweetFromXquik(tweet.quoted_tweet as XquikTweet) : null,
